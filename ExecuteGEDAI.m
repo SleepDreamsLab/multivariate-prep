@@ -1,0 +1,19 @@
+%%% Start clean
+clearvars
+clc; close all
+
+%%% Dependancies
+run('dependancies.m')
+
+%%% Projects to run
+[BIDS_PM] = qol.smartcache( ...
+    @() bidswizard({'PM'}, 'W:', 'Data_BIDS'), ...
+    fullfile(pwd, 'BidsFiles', 'BIDS_PM.mat'), false, {'BIDS_PM'});
+BIDS = BIDS_PM{1};
+
+%%% RUN GEDAI
+GEDAI_BIDS(BIDS, 'subejctfilter', {'hpmam006'}, 'RunMode', 'StageSpecific', ...
+    'leadfielddir', fullfile(BIDS.pth, '..', 'Data_Analysis\Brainstorm_db\GEDAI_Leadfield\data'), ...
+    'scoringpath', fullfile(BIDS.pth, 'derivatives\scoring\scores\Manual_Checked'), ...
+    'sfppath', fullfile(BIDS.pth, '..', 'Data_collection') ...
+    );

@@ -1,8 +1,9 @@
-function EEG = chans(EEG, select, opts)
+function EEG = chans1020(EEG, select, opts)
 arguments
     EEG
-    select   = false;
+    select = false;
     opts.net {mustBeMember(opts.net, {'EGI256', 'EGI128'})} = 'EGI256';
+    opts.add_eog = false
 end
 
 %%% EGI 256 -> 10-20 mapping  (Cz omitted – absent in standard EGI table)
@@ -29,8 +30,16 @@ switch opts.net
             'O1',  116,  ...
             'O2',  150   ...
         );
+        eogchans = [54 248 1 230];
+
     case 'EGI128'
-        % TBD
+        % 124 channels
+        chanmap = struct( ...
+            'Fp1',  22,   'Fp2',  9, 'F7',   33,  'F3',   24,  'Fz',   11,  'F4', 120, 'F8',   118, ...
+             'C3',   36, 'C4', 102,  'P3',   51,  'Pz',  60,  'P4', 90, ...
+            'O1',  68,  'O2',  81);
+            eogchans = [128-4 32 1 125-4];
+    
 end
         
 % Structure content
@@ -40,6 +49,16 @@ index1020   = struct2array(chanmap);
 % Relabel
 for iCh = 1:numel(index1020)
     EEG.chanlocs(index1020(iCh)).labels = labels1020{iCh};
+end
+
+% Add EOG
+% Bipolar EOG: EOG1 = ch54 - ch1,  EOG2 = ch230 - ch248
+if opts.add_eog
+    EEG.data(end+1,:) = EEG.data(eogchans(1),:) - EEG.data(eogchans(3),:);
+    EEG.chanlocs(end+1).labels = 'EOG1';
+    EEG.data(end+1,:) = EEG.data(eogchans(4),:) - EEG.data(eogchans(2),:);
+    EEG.chanlocs(end+1).labels = 'EOG2';
+    EEG.nbchan = size(EEG.data, 1);
 end
 
 % Select 10-20 electrodes

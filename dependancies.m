@@ -1,7 +1,7 @@
 
 % External dependancies ---------------------------------------------------
 % *************************************************************************
-addpath(pwd)
+addpath(genpath(pwd))
 
 % BIDS
 addpath('..\bids-matlab') % https://github.com/bids-standard/bids-matlab
@@ -13,6 +13,13 @@ addpath('..\sleep-prep') % https://github.com/SvennoNito/sleep-prep
 addpath('..\eeg-oscillations') % https://github.com/SvennoNito/eeg-oscillations
 addpath('..\dusk2dawn') % https://github.com/SvennoNito/dusk2dawn
 addpath(genpath('..\GEDAI-master')) % https://github.com/SvennoNito/dusk2dawn
+
+%%% MATLAB package namespaces (parent dir must be on path, not the +pkg dir itself)
+% +qol, +organon: live in this repo (multivariate-prep) — already on path via addpath(pwd)
+% +gedai: C:\Postdoc\Code\+gedai
+addpath('C:\Postdoc\Code')
+% +ica: C:\Postdoc\Code\exploratory-prep\+ica
+addpath('C:\Postdoc\Code\exploratory-prep')
 
 % %%% Fieldtrip (only needed for brainvision files saved as INT32
 % addpath('..\sleeptrip')

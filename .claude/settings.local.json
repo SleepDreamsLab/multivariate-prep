@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"C:/Postdoc/Code/multivariate-prep/GEDAI/\")",
+      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Postdoc\\\\Code\\\\Preprocessing-HD-EEG\" -Directory | Where-Object { $_.Name -match '^\\\\+' } | Select-Object FullName | Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Postdoc\\\\Code\" -Directory | Where-Object { $_.Name -eq '+ica' } | Select-Object FullName)",
+      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Postdoc\\\\Code\" -Directory | Where-Object { $_.Name -match '^\\\\+qol$' } | Select-Object FullName)",
+      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Postdoc\\\\Code\" -Directory | Where-Object { $_.Name -match '^\\\\+organon$' } | Select-Object FullName)",
+      "PowerShell(Head 5 *)"
+    ]
+  }
+}
