@@ -168,7 +168,7 @@ for ifile = 1:numel(filesEEG)
     [removed_channels, corr, znoise] = smartcache( ...
         @() clean_channels(EEG, 0.7, 4, [], 0.5, 25), ...
         fullfile(opts.savepath, 'BadChannels', ['BadChans_' fileID '.mat']), ...
-        opts.refresh, {'', 'removed_channels', 'corr', 'znoise'});
+        false, {'', 'removed_channels', 'corr', 'znoise'});
     KeepTime.BadChannelDetection = toc(D);
 
     %%% Bad channel plot
@@ -194,7 +194,7 @@ for ifile = 1:numel(filesEEG)
             case 'StageSpecific'
                 savename = ['StageSpecific_' savename];
                 [EEGgedai, ndxepochs, KeepTime] = smartcache( ...
-                    @() gedai.GEDAI_PerStage(EEG, scoringDigits_NoN1, ...
+                    @() run.GEDAI_StageSpecific(EEG, scoringDigits_NoN1, ...
                         {[-2], [-3], [0], [1]}, KeepTime, ...
                         'EpochLength',                opts.epochlength, ...
                         'GEDAIMode',                  r.GEDAIMode, ...
@@ -214,7 +214,7 @@ for ifile = 1:numel(filesEEG)
             case 'WholeNight'
                 savename = ['WholeNight_' savename];                
                 [EEGgedai, ndxepochs, KeepTime] = smartcache( ...
-                    @() gedai.GEDAI_PerStage(EEG, scoringDigits_NoN1, ...
+                    @() run.GEDAI_StageSpecific(EEG, scoringDigits_NoN1, ...
                         {[-3:1]}, KeepTime, ...
                         'EpochLength',                opts.epochlength, ...
                         'GEDAIMode',                  r.GEDAIMode, ...
@@ -234,7 +234,7 @@ for ifile = 1:numel(filesEEG)
         fprintf('GEDAI took %.2f min\n', KeepTime.GEDAI / 60)
 
         %%% Evaluation plot
-        gedai.eval_clean(EEG, EEGgedai, scoringDigits_NoN1(ndxepochs), ...
+        run.eval_clean(EEG, EEGgedai, scoringDigits_NoN1(ndxepochs), ...
             'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
             'EpochsToPlot', epochsToPlot, 'refresh', opts.refresh, ...
             'SavePath', fullfile(opts.savepath, 'Figures', ['GEDAIonly_' savename], fileID, fileID))
@@ -244,7 +244,7 @@ for ifile = 1:numel(filesEEG)
             EEGgedai = ica.selectcomps(EEGgedai, 'ArtefactThreshold', 0.5, 'ManualQC', false);
             EEGgedai = pop_subcomp(EEGgedai, find(EEGgedai.reject.gcompreject), 0);
 
-            gedai.eval_clean(EEG, EEGgedai, scoringDigits_NoN1(ndxepochs), ...
+            run.eval_clean(EEG, EEGgedai, scoringDigits_NoN1(ndxepochs), ...
                 'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
                 'EpochsToPlot', epochsToPlot, 'refresh', opts.refresh, ...
                 'SavePath', fullfile(opts.savepath, 'Figures', savename, fileID, fileID))
@@ -329,7 +329,7 @@ function epochsToPlot = resolveEpochsToPlot(requested, scoringDigits)
     for score = -3:1
         idx = find(scoringDigits == score);
         if isempty(idx), continue; end
-        epochsToPlot = [epochsToPlot, idx(1), idx(round(end/2))]; %#ok<AGROW>
+        epochsToPlot = [epochsToPlot, idx(1), idx(round(end/2)), idx(round(end/3)), idx(round(end/4)), idx(round(end/5))]; %#ok<AGROW>
         if score == -2 && numel(idx) >= 20
             epochsToPlot = [epochsToPlot, idx(5:5:20)]; %#ok<AGROW>
         end
@@ -373,15 +373,15 @@ end
 function plotBadChannels(corr, znoise, chanlocs, savefile)
     lowcorrprop = sum(corr < .7, 2) ./ size(corr, 2);
     figure();
-    tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'compact')
-    nexttile()
-    topoplot(lowcorrprop, chanlocs, 'numcontour', 0, 'emarker2', {find(lowcorrprop > .5), '.', 'r', 10})
-    colorbar(); caxis([0 .8]); title({'Prop. of recording', 'with low correlation'})
-    nexttile()
-    topoplot(znoise, chanlocs, 'numcontour', 0, 'emarker2', {find(znoise > 4), '.', 'r', 10})
-    colorbar(); caxis([0 4]); title('Line noise')
-    colormap('gray')
-    set(gcf, 'Color', 'w', 'Units', 'centimeters', 'Position', [2 2 20 10])
-    print(gcf, savefile, '-dpng', '-r150')
+    tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    nexttile();
+    topoplot(lowcorrprop, chanlocs, 'numcontour', 0, 'emarker2', {find(lowcorrprop > .5), '.', 'r', 10});
+    colorbar(); caxis([0 .8]); title({'Prop. of recording', 'with low correlation'});
+    nexttile();
+    topoplot(znoise, chanlocs, 'numcontour', 0, 'emarker2', {find(znoise > 4), '.', 'r', 10});
+    colorbar(); caxis([0 4]); title('Line noise');
+    colormap('gray');
+    set(gcf, 'Color', 'w', 'Units', 'centimeters', 'Position', [2 2 20 10]);
+    print(gcf, savefile, '-dpng', '-r150');
     close
 end
