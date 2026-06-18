@@ -80,6 +80,7 @@ arguments
     opts.epochlength (1,1) double = 30
     opts.runs                    = []
     opts.epochstoplot            = []
+    opts.prefix             char = '';
 end
 
 
@@ -192,7 +193,7 @@ for ifile = 1:numel(filesEEG)
         clear EEGgedai
         switch opts.runmode
             case 'StageSpecific'
-                savename = ['StageSpecific_' savename];
+                savename = [opts.prefix 'StageSpecific_' savename];
                 [EEGgedai, ndxepochs, KeepTime] = smartcache( ...
                     @() run.GEDAI_StageSpecific(EEG, scoringDigits_NoN1, ...
                         {[-2], [-3], [0], [1]}, KeepTime, ...
@@ -212,7 +213,7 @@ for ifile = 1:numel(filesEEG)
                     opts.refresh, {'EEGgedai', '', 'ndxepochs', 'KeepTime'});
 
             case 'WholeNight'
-                savename = ['WholeNight_' savename];                
+                savename = [opts.prefix 'WholeNight_' savename];                
                 [EEGgedai, ndxepochs, KeepTime] = smartcache( ...
                     @() run.GEDAI_StageSpecific(EEG, scoringDigits_NoN1, ...
                         {[-3:1]}, KeepTime, ...
@@ -237,7 +238,7 @@ for ifile = 1:numel(filesEEG)
         run.eval_clean(EEG, EEGgedai, scoringDigits_NoN1(ndxepochs), ...
             'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
             'EpochsToPlot', epochsToPlot, 'refresh', opts.refresh, ...
-            'SavePath', fullfile(opts.savepath, 'Figures', ['GEDAIonly_' savename], fileID, fileID))
+            'SavePath', fullfile(opts.savepath, 'Figures', [savename], fileID, fileID))
         close all;
 
         if isfield(EEGgedai.etc, 'ic_classification')
