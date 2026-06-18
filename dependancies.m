@@ -3,14 +3,18 @@
 % *************************************************************************
 addpath(genpath(pwd))
 
+% GEDAI
+addpath(genpath('..\GEDAI-master')) % https://github.com/SvennoNito/dusk2dawn
+
 % BIDS
 addpath('..\bids-matlab') % https://github.com/bids-standard/bids-matlab
 
-%%% Sophias preprocessing packages
+% Sophias preprocessing packages
 % addpath('..\chART')
-addpath(genpath('..\GEDAI-master')) % https://github.com/SvennoNito/dusk2dawn
+addpath('..\eeg-oscillations') % https://github.com/SvennoNito/eeg-oscillations
+% -> oscip.fit_fooof
 
-%%% EEGLAB
+% EEGLAB
 eeglabpath = '..\EEGLAB_2025.0.0'; % https://sccn.ucsd.edu/eeglab/download.php
 addpath(eeglabpath) 
 
