@@ -1,4 +1,4 @@
-function EEG = bids_fixchanlocs(EEG)
+function chanlocs = fixchanlocs(chanlocs)
 % QOL.BIDS_FIXCHANLOCS  Fix channel coordinates after bids_importchanlocs.
 %
 %   EEG = qol.bids_fixchanlocs(EEG)
@@ -13,16 +13,15 @@ function EEG = bids_fixchanlocs(EEG)
 %   to eeg_checkchanlocs would reuse it and ignore the corrected X/Y. The
 %   spherical fields are therefore cleared first to force recomputation.
 
-for iCh = 1:numel(EEG.chanlocs)
-    xTmp                    = EEG.chanlocs(iCh).X;
-    EEG.chanlocs(iCh).X    = EEG.chanlocs(iCh).Y;   % EGI anterior → EEGLAB right? no: EGI Y=right → EEGLAB X=right
-    EEG.chanlocs(iCh).Y    = xTmp;                   % EGI X=anterior → EEGLAB Y=anterior
+for iCh = 1:numel(chanlocs)
+    xTmp               = chanlocs(iCh).X;
+    chanlocs(iCh).X    = chanlocs(iCh).Y;   % EGI anterior → EEGLAB right? no: EGI Y=right → EEGLAB X=right
+    chanlocs(iCh).Y    = xTmp;                   % EGI X=anterior → EEGLAB Y=anterior
     % Clear derived spherical fields so eeg_checkchanlocs recomputes from X/Y/Z
-    EEG.chanlocs(iCh).theta      = [];
-    EEG.chanlocs(iCh).radius     = [];
-    EEG.chanlocs(iCh).sph_theta  = [];
-    EEG.chanlocs(iCh).sph_phi    = [];
-    EEG.chanlocs(iCh).sph_radius = [];
+    chanlocs(iCh).theta      = [];
+    chanlocs(iCh).radius     = [];
+    chanlocs(iCh).sph_theta  = [];
+    chanlocs(iCh).sph_phi    = [];
+    chanlocs(iCh).sph_radius = [];
 end
-EEG = eeg_checkchanlocs(EEG);
 end

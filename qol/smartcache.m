@@ -9,10 +9,28 @@ function varargout = smartcache(func, filename, refresh, variablenames, varargin
     %%% Check filename extension
     [filepath, fileID, ext] = fileparts(filename);
     if isempty(ext)
-        fileID = [fileID '.mat'];
+        ext   = '.mat';
+        fileID = [fileID ext];
     else
         fileID = [fileID ext];
     end
+
+%     %%% Truncate filename if full path exceeds Windows MAX_PATH (260 chars)
+%     MAX_PATH = 260;
+%     if numel(filename) > MAX_PATH
+%         allowedStem = MAX_PATH - numel(filepath) - numel(ext) - 1; % -1 for filesep
+%         if allowedStem < 1
+%             error('smartcache:pathTooLong', ...
+%                 'Directory path alone (%d chars) exceeds MAX_PATH=%d.', ...
+%                 numel(filepath), MAX_PATH)
+%         end
+%         [~, stemOnly] = fileparts(fileID);   % fileID already has ext; strip it
+%         newStem  = stemOnly(1:allowedStem);
+%         fileID   = [newStem ext];
+%         filename = fullfile(filepath, fileID);
+%         warning('smartcache:pathTruncated', ...
+%             'Path exceeded %d chars; filename stem truncated to:\n  %s', MAX_PATH, filename)
+%     end
 
     % skipMask: '' entries are collected from func but not saved or returned
     skipMask  = cellfun(@isempty, variablenames);
@@ -21,14 +39,20 @@ function varargout = smartcache(func, filename, refresh, variablenames, varargin
     nReturn   = numel(saveNames);       % outputs to save and expose to caller
 
     %%% Load from cache
-    if ~refresh && isfile(filename)
+    cacheOk = ~refresh && isfile(filename) && getfield(dir(filename), 'bytes') > 0;
+    if cacheOk
         D = tic;
         fprintf('Loading %s ...\n', filename)
-        S = load(filename);
-        fprintf('Done!\n'); fprintf('Loading took %.0fs!\n', toc(D))
-        S = orderfields(S, saveNames);
-        varargout = struct2cell(S);
-        return
+        try
+            S = load(filename);
+            fprintf('Done!\n'); fprintf('Loading took %.0fs!\n', toc(D))
+            S = orderfields(S, saveNames);
+            varargout = struct2cell(S);
+            return
+        catch ME
+            warning('smartcache:loadFailed', ...
+                'Cache file appears corrupt, re-running: %s', ME.message)
+        end
     end
 
     %%% Run function — always request nCollect outputs to reach every position
@@ -52,8 +76,11 @@ function varargout = smartcache(func, filename, refresh, variablenames, varargin
         mkdir(filepath)
     end
 
-    %%% Save cache
+    %%% Save cache  (delete any stale/0-byte file first so save cannot see a "corrupt" file)
     fprintf('Saving %s in %s ...\n', fileID, filepath)
+    if isfile(filename)
+        delete(filename)
+    end
     if whos('out').bytes > 2e9
         save(filename, '-fromstruct', out, '-v7.3')
     else

@@ -49,31 +49,21 @@ arguments
     'O1',  116,  'O2',  150 ...
     );
     opts.refresh = false;
+    opts.net = 'EGI256';
 end
 
 %%% --- Pathing ---
 basepath = fileparts(opts.SavePath);
 
-%%% --- Select non-EOG channels --- (for the old datasets with EOG)
-cleanLabels = {EEGclean.chanlocs.labels};
-eogMask     = cellfun(@(s) ~isempty(regexpi(s, 'EOG')), cleanLabels);
-goodChans   = find(~eogMask);
-if isempty(goodChans)
-    warning('gedai.eval_clean: no non-EOG channels found; using all channels.');
-    goodChans = 1:numel(cleanLabels);
-end
-
-EEGclean = pop_select(EEGclean, 'channel', goodChans);
-EEGraw = pop_select(EEGraw, 'channel', goodChans);
-
+%%% --- Interpolate ---
+tic;
+EEGraw      = pop_interp(EEGraw, EEGraw.urchanlocs, 'spherical');
+EEGclean    = pop_interp(EEGclean, EEGraw.urchanlocs, 'spherical');
+toc
 
 %%% --- Rename 10-20 channels ---
-egi256indices = struct2array(opts.egi256_to_1020);
-labels1020 = fieldnames(opts.egi256_to_1020);
-for iCh = 1:numel(egi256indices)
-    EEGclean.chanlocs(egi256indices(iCh)).labels = labels1020{iCh};
-    EEGraw.chanlocs(egi256indices(iCh)).labels = labels1020{iCh};
-end
+EEGclean    = chans1020(EEGclean, 0, 'add_eog', 0, 'net', opts.net);
+EEGraw      = chans1020(EEGraw, 0, 'add_eog', 0, 'net', opts.net);
 
 
 %%% --- Compute Welch power spectra ---
@@ -130,25 +120,14 @@ gedai.evalplots.psd_overview(PwrClean, PwrRaw, Freqs, stageScoring, FzIdx, ...
     'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
 
 gedai.evalplots.topo_band_power(PwrClean, PwrRaw, Freqs, stageScoring, ...
-    EEGclean.chanlocs, 'CLims', opts.TopoBandLims, 'SavePath', opts.SavePath);
+    EEGraw.chanlocs, 'CLims', opts.TopoBandLims, 'SavePath', opts.SavePath);
 
 gedai.evalplots.topo_band_stage(PwrClean, PwrRaw, Freqs, stageScoring, ...
     EEGclean.chanlocs, 'SavePath', opts.SavePath);
 
 %%% --- Append EOG + EMG channels for epoch overlay ---
-m = opts.EOGMontage;
-if numel(m) == 4 && max(m) <= EEGraw.nbchan
-    EEGraw.data(end+1,:) = EEGraw.data(m(1),:) - EEGraw.data(m(3),:);
-    EEGraw.chanlocs(end+1).labels = 'EOG1';
-    EEGraw.data(end+1,:) = EEGraw.data(m(4),:) - EEGraw.data(m(2),:);
-    EEGraw.chanlocs(end+1).labels = 'EOG2';
-    EEGclean.data(end+1,:) = EEGclean.data(m(1),:) - EEGclean.data(m(3),:);
-    EEGclean.chanlocs(end+1).labels = 'EOG1';
-    EEGclean.data(end+1,:) = EEGclean.data(m(4),:) - EEGclean.data(m(2),:);
-    EEGclean.chanlocs(end+1).labels = 'EOG2';
-end
-EEGraw.nbchan = size(EEGraw.data, 1);
-EEGclean.nbchan = size(EEGclean.data, 1);
+EEGclean    = chans1020(EEGclean, 0, 'add_eog', 1, 'net', opts.net);
+EEGraw      = chans1020(EEGraw, 0, 'add_eog', 1, 'net', opts.net);
 
 %%% --- Epoch overlay ---
 gedai.evalplots.epoch_overlay(EEGraw, EEGclean, stageScoring(1:30/opts.EpochLength:end), ...

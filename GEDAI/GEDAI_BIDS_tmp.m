@@ -140,13 +140,13 @@ for ifile = 1:numel(filesEEG)
 %     else
 %         EEG.chanlocs = readlocs('C:\Postdoc\Code\exploratory-prep\locfiles\electrodes.tsv')
     end
-
+EEG.chanlocs
     %%% Optional downsampling
     if opts.targetsrate > 0 && EEG.srate ~= opts.targetsrate
         fprintf('Resampling %d → %d Hz ...\n', EEG.srate, opts.targetsrate)
         EEG = pop_resample(EEG, opts.targetsrate);
     end
-
+EEG.chanlocs
     %%% Build filters
     fprintf('Building filters (srate = %d Hz) ...\n', EEG.srate)
     EEG_DCFilter_NumDen = filterbank(EEG.srate, 'DC_RCSquareFilt');
@@ -158,7 +158,7 @@ for ifile = 1:numel(filesEEG)
         EEG.data = filtfilt(EEG_DCFilter_NumDen(1,:), EEG_DCFilter_NumDen(2,:), double(EEG.data'))';
         KeepTime.DCRemoval = toc(D);
     end
-
+EEG.chanlocs
     %%% Notch filter
     if opts.removeLN
         D = tic; EEG.data = double(EEG.data);
@@ -168,10 +168,10 @@ for ifile = 1:numel(filesEEG)
         end
         KeepTime.NotchFilter = toc(D);
     end
-
+EEG.chanlocs
     %%% Average re-reference
     EEG.data = EEG.data - sum(EEG.data, 1) / (size(EEG.data, 1) + 1);
-
+EEG.chanlocs
     %%% Replace isolated N1 epochs at stage boundaries with neighbour stage
     scoringDigits_NoN1 = gedai.killN1(scoringDigits);
 
@@ -243,6 +243,27 @@ for ifile = 1:numel(filesEEG)
             fullfile(opts.savepath, 'EEG', savename, [fileID '.mat']), ...
             opts.refresh, {'EEGgedai', '', 'ndxepochs', 'KeepTime'});
         fprintf('GEDAI took %.2f min\n', KeepTime.GEDAI / 60)
+
+        % temporary stuff
+%         EEG             = pop_interp(EEG, EEG.urchanlocs, 'spherical');
+%         EEGgedai        = pop_interp(EEGgedai, EEG.urchanlocs, 'spherical');
+%         chanlocs        = readlocs('C:\Postdoc\Code\exploratory-prep\locfiles\electrodes.tsv');  
+%         chanlocs        = fixchanlocs(chanlocs);
+%         EEG.chanlocs        = chanlocs(1:256);
+%         EEGgedai.chanlocs   = chanlocs(1:256);
+        EEGgedai.chanlocs = EEG.chanlocs;
+        EEGgedai.urchanlocs = EEG.urchanlocs;
+%         EEG.urchanlocs      = chanlocs(1:256);
+%         EEGgedai.urchanlocs= chanlocs(1:256);
+        savename = ['RegFiducials_' savename];
+        epochsToPlot = [];
+        EEG =eeg_checkset(EEG); EEGgedai=eeg_checkset(EEGgedai);
+        run.eval_clean(EEG, EEGgedai, scoringDigits_NoN1(ndxepochs), ...
+            'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
+            'EpochsToPlot', epochsToPlot, 'refresh', false, ...
+            'SavePath', fullfile(opts.savepath, 'Figures', [savename], fileID, fileID))
+        close all;
+
 
         %%% Evaluation plot
         run.eval_clean(EEG, EEGgedai, scoringDigits_NoN1(ndxepochs), ...
