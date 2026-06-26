@@ -1,4 +1,4 @@
-function remove_DC_LN(BIDS, opts)
+function GEDAI_BIDS(BIDS, opts)
 %GEDAI_BIDS  Run GEDAI artefact-rejection on a BIDS sleep EEG dataset.
 %
 %   GEDAI_BIDS(BIDS)
@@ -86,38 +86,62 @@ arguments
 end
 
 
-%%% Import EEG
-EEG = eeg_import(eegFile);
+%%% Initiate variables
+KeepTime = [];
+if isempty(opts.runs), opts.runs = gedai.defaultRuns(); end
 
-%%% Drop non-EEG channels
-EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
+%%% Query EEG files
+filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
+    'task', opts.tasklabel, 'recording', opts.recordinglabel);
+if isempty(filesEEG); error('GEDAI_BIDS:noFiles', 'No matching EEG files found in BIDS layout.'); end
 
-%%% Optional downsampling
-if opts.targetsrate > 0 && EEG.srate ~= opts.targetsrate
-    fprintf('Resampling %d → %d Hz ...\n', EEG.srate, opts.targetsrate)
-    EEG = pop_resample(EEG, opts.targetsrate);
-end
+%%% Scoring files
+scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
 
-%%% Build filters
-fprintf('Building filters (srate = %d Hz) ...\n', EEG.srate)
-EEG_DCFilter_NumDen = filterbank(EEG.srate, 'DC_RCSquareFilt');
+%%% Loop over EEG files
+for ifile = 1:numel(filesEEG)
+    eegFile  = filesEEG{ifile};
+    p        = bids.internal.parse_filename(eegFile);
+    fileID   = strjoin(cellfun(@(k) [k '-' p.entities.(k)], fieldnames(p.entities), 'uni', 0), '_');
 
-%%% DC removal
-if opts.removeDC
-    D = tic; fprintf('\nDC removal ...\n')
-    EEG.data = filtfilt(EEG_DCFilter_NumDen(1,:), EEG_DCFilter_NumDen(2,:), double(EEG.data'))';
-    KeepTime.DCRemoval = toc(D);
-end
+    %%% Subject filter
+    if ~isempty(opts.subjectfilter) && ~contains(fileID, opts.subjectfilter)
+        continue
+    end
+    fprintf('\n=== %s ===\n', fileID)
+    fprintf('Save path → %s\n', opts.savepath)
 
-%%% Zapline
-if opts.removeLN
-    D = tic; fprintf('\nZapline plus ...\n')
-    [EEG.data, plotHandles, analyticsResults] = clean_data_with_zapline_plus( ...
-        EEG.data, EEG.srate, ...
-        'noisefreqs', 'line', ...   % auto-detect line freq, or specify [50]
-        'plotResults', 0);
-    KeepTime.Zapline = toc(D);
-    fprintf('ZapLine-plus: %.2f min\n', KeepTime.Zapline/60);
-end
+    %%% Import EEG
+    EEG = eeg_import(eegFile);
 
+    %%% Drop non-EEG channels
+    EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
+
+    %%% Optional downsampling
+    if opts.targetsrate > 0 && EEG.srate ~= opts.targetsrate
+        fprintf('Resampling %d → %d Hz ...\n', EEG.srate, opts.targetsrate)
+        EEG = pop_resample(EEG, opts.targetsrate);
+    end
+
+    %%% Build filters
+    fprintf('Building filters (srate = %d Hz) ...\n', EEG.srate)
+    EEG_DCFilter_NumDen = filterbank(EEG.srate, 'DC_RCSquareFilt');
+
+    %%% DC removal
+    if opts.removeDC
+        D = tic; fprintf('\nDC removal ...\n')
+        EEG.data = filtfilt(EEG_DCFilter_NumDen(1,:), EEG_DCFilter_NumDen(2,:), double(EEG.data'))';
+        KeepTime.DCRemoval = toc(D);
+    end
+
+    %%% Zapline
+    if opts.removeLN
+        D = tic; fprintf('\nZapline plus ...\n')
+        [EEG.data, plotHandles, analyticsResults] = clean_data_with_zapline_plus( ...
+            EEG.data, EEG.srate, ...
+            'noisefreqs', 'line', ...   % auto-detect line freq, or specify [50]
+            'plotResults', 0);
+        KeepTime.Zapline = toc(D);
+        fprintf('ZapLine-plus: %.2f min\n', KeepTime.Zapline/60);
+    end
 end

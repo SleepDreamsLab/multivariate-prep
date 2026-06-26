@@ -14,6 +14,7 @@ function varargout = smartcache(func, filename, refresh, variablenames, varargin
     else
         fileID = [fileID ext];
     end
+    isDat = strcmpi(ext, '.dat');
 
 %     %%% Truncate filename if full path exceeds Windows MAX_PATH (260 chars)
 %     MAX_PATH = 260;
@@ -44,10 +45,14 @@ function varargout = smartcache(func, filename, refresh, variablenames, varargin
         D = tic;
         fprintf('Loading %s ...\n', filename)
         try
-            S = load(filename);
+            if isDat
+                varargout = {eeg_import(filename)};
+            else
+                S = load(filename);
+                S = orderfields(S, saveNames);
+                varargout = struct2cell(S);
+            end
             fprintf('Done!\n'); fprintf('Loading took %.0fs!\n', toc(D))
-            S = orderfields(S, saveNames);
-            varargout = struct2cell(S);
             return
         catch ME
             warning('smartcache:loadFailed', ...
@@ -81,7 +86,9 @@ function varargout = smartcache(func, filename, refresh, variablenames, varargin
     if isfile(filename)
         delete(filename)
     end
-    if whos('out').bytes > 2e9
+    if isDat
+        pop_writebva(varargout{1}, filename, 'DataOrientation', 'MULTIPLEXED');
+    elseif whos('out').bytes > 2e9
         save(filename, '-fromstruct', out, '-v7.3')
     else
         save(filename, '-fromstruct', out)

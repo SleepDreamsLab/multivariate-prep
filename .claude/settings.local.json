@@ -7,7 +7,8 @@
       "PowerShell(Get-ChildItem -Recurse \"C:\\\\Postdoc\\\\Code\" -Directory | Where-Object { $_.Name -match '^\\\\+qol$' } | Select-Object FullName)",
       "PowerShell(Get-ChildItem -Recurse \"C:\\\\Postdoc\\\\Code\" -Directory | Where-Object { $_.Name -match '^\\\\+organon$' } | Select-Object FullName)",
       "PowerShell(Head 5 *)",
-      "PowerShell(New-Item *)"
+      "PowerShell(New-Item *)",
+      "PowerShell(Rename-Item *)"
     ]
   }
 }
