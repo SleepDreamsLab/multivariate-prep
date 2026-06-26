@@ -30,7 +30,11 @@ function build_leadfield_bids(bids, opts)
 %   WarpTolerance    fraction of head points dropped as outliers before
 %                    scale warp; 0 = keep all; must be in [0,1)  (default 0)
 %   iWarpRefSession  1-based index of session driving the scale warp (default 1)
-%   DoQC             save registration PNG figures    (default true)
+%   ForceReprocess   reprocess subjects that already have BEM surfaces; when
+%                    false (default) such subjects are skipped; when true the
+%                    anatomy is reset to the template before re-warping so the
+%                    scale is not applied twice                   (default false)
+%   DoQC             save registration PNG figures               (default true)
 %   QCDir            output folder for QC images      (default <pwd>/QC_registration)
 
 arguments
@@ -45,6 +49,7 @@ arguments
     opts.nInner          (1,1) double {mustBePositive,mustBeInteger} = 1922
     opts.WarpTolerance   (1,1) double {mustBeNonnegative}            = 0
     opts.iWarpRefSession (1,1) double {mustBePositive,mustBeInteger} = 1
+    opts.ForceReprocess  (1,1) logical = false
     opts.DoQC            (1,1) logical = true
     opts.QCDir           (1,1) string  = ""
 end
@@ -107,10 +112,17 @@ for p = 1:numel(uNames)
     for e = 1:numel(iEntries)
         sess = bids.subjects(iEntries(e)).session;
         if ~isempty(sess)
-            sfp  = opts.SfpResolver(bids.pth, subjectName, sess, studyId);
+            try
+                sfp = opts.SfpResolver(bids.pth, subjectName, sess, studyId);
+            catch ME
+                fprintf('[skip] %s / %s: SfpResolver error — %s\n', subjectName, sess, ME.message);
+                sfp = '';
+            end
             if ~isempty(sfp) && isfile(sfp)
                 sessName{end+1} = sess;   %#ok<AGROW>
                 sfpPath{end+1}  = sfp;    %#ok<AGROW>
+            elseif isempty(sfp)
+                fprintf('[skip] %s / %s: no .sfp found\n', subjectName, sess);
             else
                 fprintf('[skip] %s / %s: no .sfp (looked for: %s)\n', subjectName, sess, sfp);
             end
@@ -122,10 +134,27 @@ for p = 1:numel(uNames)
     end
     nSess = numel(sfpPath);
 
+    % Detect whether a prior run already completed warp + BEM for this subject.
+    % BEM surface filenames contain 'bem', making them a reliable proxy.
+    [sSubjectPre, iSubjectPre] = bst_get('Subject', subjectName, 0);
+    hasBEM = ~isempty(iSubjectPre) && iSubjectPre > 0 && ...
+        ~isempty(sSubjectPre) && ~isempty(sSubjectPre.Surface) && ...
+        any(contains({sSubjectPre.Surface.FileName}, 'bem'));
+
+    if hasBEM && ~opts.ForceReprocess
+        fprintf('[skip] %s: BEM surfaces already exist (set ForceReprocess=true to redo)\n', subjectName);
+        continue;
+    end
+
     % Create subject if absent; guards re-runs without triggering dialogs.
-    [~, iSubjectCheck] = bst_get('Subject', subjectName, 0);
-    if isempty(iSubjectCheck) || iSubjectCheck == 0
+    if isempty(iSubjectPre) || iSubjectPre == 0
         db_add_subject(subjectName, [], 1, 0);
+    elseif hasBEM
+        % Force-reprocessing an already-warped subject: reset the anatomy back
+        % to the template so bst_warp_prepare starts from unscaled surfaces.
+        fprintf('[reset] %s: resetting anatomy to template before re-warp\n', subjectName);
+        db_set_template(iSubjectPre, sTemplates(iTemplate), 1);
+        db_save();
     end
 
     %% Per-session: import .sfp and refine electrode registration (rigid ICP).
@@ -152,11 +181,15 @@ for p = 1:numel(uNames)
 
         % QC 1: pre-warp electrode fit (green = close to scalp, red = far).
         if opts.DoQC
-            hFig    = channel_align_manual(channelFile, 'EEG', 0);
-            qcFile  = char(fullfile(opts.QCDir, sprintf('pre_warp_%s_%s.png', subjectName, sessName{s})));
-            saveas(hFig, qcFile);
+            hFig = channel_align_manual(channelFile, 'EEG', 0);
+            for view = {'left', 'front', 'top'}
+                figure_3d('SetStandardView', hFig, view{1});
+                drawnow;
+                qcFile = char(fullfile(opts.QCDir, sprintf('pre_warp_%s_%s_%s.png', subjectName, sessName{s}, view{1})));
+                saveas(hFig, qcFile);
+                fprintf('[QC pre-warp] %s\n', qcFile);
+            end
             close(hFig);
-            fprintf('[QC pre-warp] %s\n', qcFile);
         end
     end
 
@@ -167,19 +200,21 @@ for p = 1:numel(uNames)
     bst_warp_prepare(sessChan{iRef}, warpOpt);
     db_save();
 
-    % QC 2: post-warp head points on the scaled scalp (6 standard views).
+    % QC 2: post-warp electrode fit per session on the shared scaled scalp.
     if opts.DoQC
         sSubjQC   = bst_get('Subject', subjectName);
         scalpFile = sSubjQC.Surface(sSubjQC.iScalp).FileName;
-        hFig      = view_headpoints(sessChan{iRef}, scalpFile);
-        for view = {'left','right','front','back','top','bottom'}
-            figure_3d('SetStandardView', hFig, view{1});
-            drawnow;
-            qcFile = char(fullfile(opts.QCDir, sprintf('post_warp_%s_%s.png', subjectName, view{1})));
-            saveas(hFig, qcFile);
-            fprintf('[QC post-warp] %s\n', qcFile);
+        for s = 1:nSess
+            hFig = view_headpoints(sessChan{s}, scalpFile);
+            for view = {'left','front','top'}
+                figure_3d('SetStandardView', hFig, view{1});
+                drawnow;
+                qcFile = char(fullfile(opts.QCDir, sprintf('post_warp_%s_%s_%s.png', subjectName, sessName{s}, view{1})));
+                saveas(hFig, qcFile);
+                fprintf('[QC post-warp] %s\n', qcFile);
+            end
+            close(hFig);
         end
-        close(hFig);
     end
 
     %% Generate BEM surfaces on the scaled anatomy.

@@ -25,12 +25,32 @@ GEDAI_BIDS_tmp(BIDS, 'subjectfilter', {'drop0001'}, 'RunMode', 'StageSpecific', 
     );
 %%
 
+%%
 %%% RUN GEDAI
 BIDS = BIDS_PM{1};
-GEDAI_BIDS(BIDS, 'subjectfilter', {'hpmam006'}, 'refresh', false, 'RunMode', 'StageSpecific', ...
-    'leadfielddir', fullfile(BIDS.pth, '..', 'Data_Analysis\Brainstorm_db\Leadfield_PM\data'), ...
+GEDAI_BIDS(BIDS, 'refresh', false, 'RunMode', 'StageSpecific', 'prefix', 'ZapLine_', ...
+    'leadfielddir', fullfile(BIDS.pth, '..', 'Data_Analysis\Brainstorm_db\PM_Leadfields\data'), ...
     'scoringpath', fullfile(BIDS.pth, 'derivatives\scoring\scores\Manual_Checked') ...
     );
+% GEDAI_BIDS(BIDS, 'subjectfilter', {'hpmam006'}, 'refresh', false, 'RunMode', 'StageSpecific', ...
+%     'leadfielddir', fullfile(BIDS.pth, '..', 'Data_Analysis\Brainstorm_db\Leadfield_PM\data'), ...
+%     'scoringpath', fullfile(BIDS.pth, 'derivatives\scoring\scores\Manual_Checked') ...
+%     );
+%%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 % 
 % evalGEDAI(BIDS, {'StageSpecific_ICAnone_BBonly0_LCO1_BBE10_auto_PT98_BMT-2_ECTInf_SENSAI0_KC0_b1x10_b2x10_sr125'}, ...

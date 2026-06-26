@@ -139,6 +139,8 @@ for ifile = 1:numel(filesEEG)
 %         EEG.chanlocs = chanlocs(4 : EEG.nbchan + 3);
 %     else
 %         EEG.chanlocs = readlocs('C:\Postdoc\Code\exploratory-prep\locfiles\electrodes.tsv')
+    else
+        continue
     end
 
     %%% Optional downsampling
@@ -159,15 +161,32 @@ for ifile = 1:numel(filesEEG)
         KeepTime.DCRemoval = toc(D);
     end
 
-    %%% Notch filter
-    if opts.removeLN
-        D = tic; EEG.data = double(EEG.data);
-        for ifilt = 1:numel(EEG_NotchFilt_IIR)
-            fprintf('%d Hz notch ...\n', 50 * ifilt)
-            EEG.data = filtfilt(EEG_NotchFilt_IIR{ifilt}, EEG.data')';
-        end
-        KeepTime.NotchFilter = toc(D);
-    end
+%     %%% Notch filter
+%     if opts.removeLN
+%         D = tic; EEG.data = double(EEG.data);
+%         for ifilt = 1:numel(EEG_NotchFilt_IIR)
+%             fprintf('%d Hz notch ...\n', 50 * ifilt)
+%             EEG.data = filtfilt(EEG_NotchFilt_IIR{ifilt}, EEG.data')';
+%         end
+%         KeepTime.NotchFilter = toc(D);
+%     end
+
+    %%% Zapline
+    tic;
+    [EEG_zap.data, plotHandles, analyticsResults] = clean_data_with_zapline_plus( ...
+        EEG.data, EEG.srate, ...
+        'noisefreqs', 'line', ...   % auto-detect line freq, or specify [50]
+        'plotResults', 0);
+    t_zaplineplus = toc;
+    fprintf('ZapLine-plus: %.2f min\n', t_zaplineplus/60);
+%     epochsToPlot = gedai.resolveEpochsToPlot(opts.epochstoplot, scoringDigits);
+%     
+%     run.eval_clean(EEG, EEG_zap, scoringDigits, ...
+%         'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
+%         'EpochsToPlot', epochsToPlot, 'refresh', 0, ...
+%         'SavePath', fullfile(opts.savepath, 'Figures', 'Zapline', fileID, fileID))
+%     close all;
+
 
     %%% Average re-reference
     EEG.data = EEG.data - sum(EEG.data, 1) / (size(EEG.data, 1) + 1);
