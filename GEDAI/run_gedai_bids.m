@@ -64,7 +64,7 @@ arguments
     opts.leadfielddir     char = fullfile(BIDS.pth, '..', 'Data_Analysis', 'Brainstorm_db', 'Leadfield_PM', 'data')
 
     %--- Output paths ---
-    opts.savepath         char = fullfile(BIDS.pth, 'derivatives', 'preprocessing', 'GEDAI')
+    opts.savepath         char = fullfile(BIDS.pth, 'derivatives', 'preprocessing')
     opts.figpath          char = fullfile(BIDS.pth, 'derivatives', 'preprocessing', 'figures')
     opts.geddesc          char = 'filtGEDAI'
     opts.refresh (1,1) logical = false
@@ -91,7 +91,7 @@ if isempty(opts.runs), opts.runs = gedai.defaultRuns(); end
 
 %%% Query EEG files from BIDS (used for entity extraction and subject iteration)
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
-    'task', opts.tasklabel, 'recording', opts.recordinglabel);
+    'task', opts.tasklabel, 'acq', opts.recordinglabel);
 if isempty(filesEEG)
     error('run_gedai_bids:noFiles', 'No matching EEG files found in BIDS layout.');
 end
@@ -104,7 +104,7 @@ for ifile = 1:numel(filesEEG)
     eegFile = filesEEG{ifile};
     p       = bids.internal.parse_filename(eegFile);
     fileID  = strjoin(cellfun(@(k) [k '-' p.entities.(k)], fieldnames(p.entities), 'uni', 0), '_');
-    subDir  = fullfile(p.entities.sub, p.entities.ses);
+    subDir  = fullfile(['sub-' p.entities.sub], ['ses-' p.entities.ses]);
 
     %%% Subject filter
     if ~isempty(opts.subjectfilter) && ~contains(fileID, opts.subjectfilter)

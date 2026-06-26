@@ -45,7 +45,7 @@ end
 
 %%% Query EEG files
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
-    'task', opts.tasklabel, 'recording', opts.recordinglabel);
+    'task', opts.tasklabel, 'acq', opts.recordinglabel);
 if isempty(filesEEG)
     error('run_filter_bids:noFiles', 'No matching EEG files found in BIDS layout.');
 end
@@ -64,7 +64,7 @@ for ifile = 1:numel(filesEEG)
 
     %%% Build output path
     if opts.bidsout
-        outDir  = fullfile(opts.savepath, p.entities.sub, p.entities.ses);
+        outDir  = fullfile(opts.savepath, ['sub-' p.entities.sub], ['ses-' p.entities.ses]);
         outFile = fullfile(outDir, [fileID '_desc-' opts.desc '_eeg.dat']);
     else
         outDir  = fullfile(opts.savepath);
