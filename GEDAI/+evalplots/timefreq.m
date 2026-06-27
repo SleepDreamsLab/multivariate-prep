@@ -1,4 +1,4 @@
-function timefreq(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx, opts)
+function timefreq(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, ChanIdx, opts)
 % GEDAI.EVALPLOTS.TIMEFREQ  Time-frequency spectrogram: raw vs. clean.
 %
 %   gedai.evalplots.timefreq(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx)
@@ -8,7 +8,8 @@ function timefreq(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx, opts)
 %   ------
 %   PwrClean     : chans x epochs x freqs — GEDAI-cleaned power.
 %   PwrRaw       : chans x epochs x freqs — raw power.
-%   Freqs        : frequency vector (Hz).
+%   FreqsClean   : frequency vector for PwrClean (Hz).
+%   FreqsRaw     : frequency vector for PwrRaw (Hz).
 %   StageScoring : per-epoch sleep-stage codes (used for hypnogram strip).
 %   ChanIdx      : channel index within PwrClean/PwrRaw (default 1).
 %
@@ -25,7 +26,8 @@ function timefreq(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx, opts)
 arguments
     PwrClean
     PwrRaw
-    Freqs        {mustBeVector}
+    FreqsClean   {mustBeVector}
+    FreqsRaw     {mustBeVector}
     StageScoring {mustBeVector}
     ChanIdx      (1,1) double = 1
     opts.ChanLabel               = 'C3'
@@ -38,13 +40,14 @@ arguments
     opts.SavePath                = ''
 end
 
-nEpochs = size(PwrRaw, 2);
-fMask   = Freqs >= opts.FreqLim(1) & Freqs <= opts.FreqLim(2);
-T_min   = (0:nEpochs-1) * opts.EpochLength / 60;   % epoch start-times in minutes
-xLim    = [0  T_min(end) + opts.EpochLength/60];
+nEpochs    = size(PwrRaw, 2);
+fMaskRaw   = FreqsRaw   >= opts.FreqLim(1) & FreqsRaw   <= opts.FreqLim(2);
+fMaskClean = FreqsClean >= opts.FreqLim(1) & FreqsClean <= opts.FreqLim(2);
+T_min      = (0:nEpochs-1) * opts.EpochLength / 60;
+xLim       = [0  T_min(end) + opts.EpochLength/60];
 
-P_raw_log   = log10(squeeze(PwrRaw(ChanIdx,   :, fMask))' + eps);   % freqs × epochs
-P_clean_log = log10(squeeze(PwrClean(ChanIdx, :, fMask))' + eps);
+P_raw_log   = log10(squeeze(PwrRaw(ChanIdx,   :, fMaskRaw))'   + eps);   % freqs × epochs
+P_clean_log = log10(squeeze(PwrClean(ChanIdx, :, fMaskClean))' + eps);
 
 scoringTF = StageScoring(:)';
 if numel(scoringTF) > nEpochs, scoringTF = scoringTF(1:nEpochs); end
@@ -118,7 +121,7 @@ grid on; set(ax_exp, 'GridAlpha', 0.15, 'GridLineStyle', ':');
 nContours = 40;
 
 ax_raw = nexttile(15, [7 1]); hold on;
-contourf(T_min, Freqs(fMask), P_raw_log, nContours, 'LineColor', 'none');
+contourf(T_min, FreqsRaw(fMaskRaw), P_raw_log, nContours, 'LineColor', 'none');
 clim(opts.CLim);
 colormap(ax_raw, custom_cmap());
 cb = colorbar; cb.Label.String = 'log_{10}(\muV^2/Hz)'; cb.FontSize = 9;
@@ -128,7 +131,7 @@ title(sprintf('before GEDAI  (%s)', opts.ChanLabel), 'FontSize', 11, 'FontWeight
 set(ax_raw, 'FontSize', 10, 'Box', 'off', 'TickDir', 'out', 'YDir', 'normal');
 
 ax_clean = nexttile(16, [7 1]); hold on;
-contourf(T_min, Freqs(fMask), P_clean_log, nContours, 'LineColor', 'none');
+contourf(T_min, FreqsClean(fMaskClean), P_clean_log, nContours, 'LineColor', 'none');
 clim(opts.CLim);
 colormap(ax_clean, custom_cmap());
 cb = colorbar; cb.Label.String = 'log_{10}(\muV^2/Hz)'; cb.FontSize = 9;

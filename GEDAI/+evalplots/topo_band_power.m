@@ -1,4 +1,4 @@
-function topo_band_power(PwrClean, PwrRaw, Freqs, StageScoring, Chanlocs, opts)
+function topo_band_power(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, Chanlocs, opts)
 % GEDAI.EVAL.TOPO_BAND_POWER  Topographic band power: raw vs. clean, per sleep stage.
 %
 %   gedai.eval.topo_band_power(PwrClean, PwrRaw, Freqs, StageScoring, Chanlocs)
@@ -25,7 +25,8 @@ function topo_band_power(PwrClean, PwrRaw, Freqs, StageScoring, Chanlocs, opts)
 arguments
     PwrClean
     PwrRaw
-    Freqs        {mustBeVector}
+    FreqsClean   {mustBeVector}
+    FreqsRaw     {mustBeVector}
     StageScoring {mustBeVector}
     Chanlocs
     opts.Bands    = {}
@@ -60,14 +61,19 @@ for iBand = 1:nBands
     else
         stageMask = StageScoring == stageCode;
     end
-    fBandMask = Freqs >= freqRange(1) & Freqs <= freqRange(2);
+    fBandMaskRaw   = FreqsRaw   >= freqRange(1) & FreqsRaw   <= freqRange(2);
+    fBandMaskClean = FreqsClean >= freqRange(1) & FreqsClean <= freqRange(2);
 
-    if ~any(stageMask) || ~any(fBandMask), continue; end
+    if ~any(stageMask) || (~any(fBandMaskRaw) && ~any(fBandMaskClean)), continue; end
 
-    rawBands(:, iBand)   = squeeze(mean(mean( ...
-        log10(PwrRaw(:,   stageMask, fBandMask) + eps), 3), 2));
-    cleanBands(:, iBand) = squeeze(mean(mean( ...
-        log10(PwrClean(:, stageMask, fBandMask) + eps), 3), 2));
+    if any(fBandMaskRaw)
+        rawBands(:, iBand)   = squeeze(mean(mean( ...
+            log10(PwrRaw(:,   stageMask, fBandMaskRaw)   + eps), 3), 2));
+    end
+    if any(fBandMaskClean)
+        cleanBands(:, iBand) = squeeze(mean(mean( ...
+            log10(PwrClean(:, stageMask, fBandMaskClean) + eps), 3), 2));
+    end
 end
 
 % Color limits: user-supplied where provided, data-driven (clean min/max) otherwise

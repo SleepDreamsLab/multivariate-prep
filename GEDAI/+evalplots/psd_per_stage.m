@@ -1,14 +1,15 @@
-function psd_per_stage(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx, opts)
+function psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, ChanIdx, opts)
 % GEDAI.EVAL.PSD_PER_STAGE  Clean vs. raw mean PSD plotted per sleep stage.
 %
-%   gedai.eval.psd_per_stage(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx)
+%   gedai.eval.psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, ChanIdx)
 %   gedai.eval.psd_per_stage(..., Name, Value)
 %
 %   Inputs
 %   ------
 %   PwrClean     : chans x epochs x freqs — GEDAI-cleaned power.
 %   PwrRaw       : chans x epochs x freqs — raw power.
-%   Freqs        : frequency vector (Hz).
+%   FreqsClean   : frequency vector for PwrClean (Hz).
+%   FreqsRaw     : frequency vector for PwrRaw (Hz).
 %   StageScoring : per-epoch sleep-stage codes.
 %   ChanIdx      : channel index (within PwrClean/PwrRaw) used for the PSD line.
 %
@@ -21,7 +22,8 @@ function psd_per_stage(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx, opts)
 arguments
     PwrClean
     PwrRaw
-    Freqs        {mustBeVector}
+    FreqsClean   {mustBeVector}
+    FreqsRaw     {mustBeVector}
     StageScoring {mustBeVector}
     ChanIdx      (1,1) double = 1
     opts.FreqLim   (1,2) double = [0 40]
@@ -31,7 +33,8 @@ end
 
 uniqueStages = unique(StageScoring);
 nStages      = numel(uniqueStages);
-fMask        = Freqs >= opts.FreqLim(1) & Freqs <= opts.FreqLim(2);
+fMaskClean   = FreqsClean >= opts.FreqLim(1) & FreqsClean <= opts.FreqLim(2);
+fMaskRaw     = FreqsRaw   >= opts.FreqLim(1) & FreqsRaw   <= opts.FreqLim(2);
 
 [scaleList, logXLim, pow2ticks] = freq_scale_setup(opts.FreqLim, opts.FreqScale);
 nScales = numel(scaleList);
@@ -49,22 +52,22 @@ for iScale = 1:nScales
         nexttile; hold on;
         if ~any(mask), continue; end
 
-        meanClean = squeeze(mean(log10(PwrClean(ChanIdx, mask, fMask)), 2));
-        meanRaw   = squeeze(mean(log10(PwrRaw(ChanIdx,   mask, fMask)), 2));
+        meanClean = squeeze(mean(log10(PwrClean(ChanIdx, mask, fMaskClean)), 2));
+        meanRaw   = squeeze(mean(log10(PwrRaw(ChanIdx,   mask, fMaskRaw)),   2));
 
         % Individual epoch lines — plotted first so means sit on top
-        epochsRaw   = squeeze(log10(PwrRaw(ChanIdx,   mask, fMask)));   % nEpochs × nFreqs
-        epochsClean = squeeze(log10(PwrClean(ChanIdx, mask, fMask)));
+        epochsRaw   = squeeze(log10(PwrRaw(ChanIdx,   mask, fMaskRaw)));
+        epochsClean = squeeze(log10(PwrClean(ChanIdx, mask, fMaskClean)));
         if isvector(epochsRaw),   epochsRaw   = epochsRaw(:)';   end
         if isvector(epochsClean), epochsClean = epochsClean(:)'; end
-        plot(Freqs(fMask), epochsRaw',   '-', 'Color', [0.65 0.65 0.65 0.25], ...
+        plot(FreqsRaw(fMaskRaw),     epochsRaw',   '-', 'Color', [0.65 0.65 0.65 0.25], ...
             'LineWidth', 0.4, 'HandleVisibility', 'off');
-        plot(Freqs(fMask), epochsClean', '-', 'Color', [stage_color(d), 0.25], ...
+        plot(FreqsClean(fMaskClean), epochsClean', '-', 'Color', [stage_color(d), 0.25], ...
             'LineWidth', 0.4, 'HandleVisibility', 'off');
 
-        plot(Freqs(fMask), meanRaw,   '--', 'Color', [0.65 0.65 0.65], ...
+        plot(FreqsRaw(fMaskRaw),     meanRaw,   '--', 'Color', [0.65 0.65 0.65], ...
             'LineWidth', 1.4, 'DisplayName', 'before GEDAI');
-        plot(Freqs(fMask), meanClean, '-',  'Color', stage_color(d), ...
+        plot(FreqsClean(fMaskClean), meanClean, '-',  'Color', stage_color(d), ...
             'LineWidth', 2.0, 'DisplayName', 'after GEDAI');
 
         if iStage == 1

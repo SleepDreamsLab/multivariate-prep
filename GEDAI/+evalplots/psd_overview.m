@@ -1,14 +1,15 @@
-function psd_overview(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx, opts)
+function psd_overview(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, ChanIdx, opts)
 % GEDAI.EVAL.PSD_OVERVIEW  Two-tile PSD: raw (left) vs. clean (right), stages as coloured lines.
 %
-%   gedai.eval.psd_overview(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx)
+%   gedai.eval.psd_overview(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, ChanIdx)
 %   gedai.eval.psd_overview(..., Name, Value)
 %
 %   Inputs
 %   ------
 %   PwrClean     : chans x epochs x freqs — GEDAI-cleaned power.
 %   PwrRaw       : chans x epochs x freqs — raw power.
-%   Freqs        : frequency vector (Hz).
+%   FreqsClean   : frequency vector for PwrClean (Hz).
+%   FreqsRaw     : frequency vector for PwrRaw (Hz).
 %   StageScoring : per-epoch sleep-stage codes.
 %   ChanIdx      : channel index used for the PSD lines.
 %
@@ -21,7 +22,8 @@ function psd_overview(PwrClean, PwrRaw, Freqs, StageScoring, ChanIdx, opts)
 arguments
     PwrClean
     PwrRaw
-    Freqs        {mustBeVector}
+    FreqsClean   {mustBeVector}
+    FreqsRaw     {mustBeVector}
     StageScoring {mustBeVector}
     ChanIdx      (1,1) double = 1
     opts.FreqLim   (1,2) double = [0 40]
@@ -31,7 +33,8 @@ end
 
 uniqueStages = unique(StageScoring);
 nStages      = numel(uniqueStages);
-fMask        = Freqs >= opts.FreqLim(1) & Freqs <= opts.FreqLim(2);
+fMaskClean   = FreqsClean >= opts.FreqLim(1) & FreqsClean <= opts.FreqLim(2);
+fMaskRaw     = FreqsRaw   >= opts.FreqLim(1) & FreqsRaw   <= opts.FreqLim(2);
 
 [scaleList, logXLim, pow2ticks] = freq_scale_setup(opts.FreqLim, opts.FreqScale);
 nScales = numel(scaleList);
@@ -42,12 +45,16 @@ fig = figure('Color', 'w', 'Units', 'centimeters', ...
 tiledlayout(nScales, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 tileLabels = {'before GEDAI', 'after GEDAI'};
-PwrBoth    = {PwrRaw, PwrClean};
+PwrBoth    = {PwrRaw,    PwrClean};
+FreqsBoth  = {FreqsRaw,  FreqsClean};
+fMaskBoth  = {fMaskRaw,  fMaskClean};
 
 for iScale = 1:nScales
     sc = scaleList{iScale};
     for iTile = 1:2
-        Pwr = PwrBoth{iTile};
+        Pwr   = PwrBoth{iTile};
+        Freqs = FreqsBoth{iTile};
+        fMask = fMaskBoth{iTile};
         nexttile; hold on;
         for iStage = 1:nStages
             d    = uniqueStages(iStage);

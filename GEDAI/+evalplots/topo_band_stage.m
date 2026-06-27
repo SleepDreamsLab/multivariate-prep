@@ -1,4 +1,4 @@
-function topo_band_stage(PwrClean, PwrRaw, Freqs, StageScoring, Chanlocs, opts)
+function topo_band_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, Chanlocs, opts)
 % GEDAI.EVALPLOTS.TOPO_BAND_STAGE  Band × sleep-stage topoplot grid, raw and clean.
 %
 %   Produces two figures (raw and clean), each a 6-band × 5-stage grid of
@@ -9,7 +9,8 @@ function topo_band_stage(PwrClean, PwrRaw, Freqs, StageScoring, Chanlocs, opts)
 arguments
     PwrClean                    % chans × epochs × freqs
     PwrRaw
-    Freqs        {mustBeVector}
+    FreqsClean   {mustBeVector}
+    FreqsRaw     {mustBeVector}
     StageScoring {mustBeVector}
     Chanlocs
     opts.CLims    = []   % nBands×2 [lo hi] per band; NaN/missing rows → auto
@@ -47,17 +48,22 @@ rawPwr   = nan(nChans, nBands, nStages);
 cleanPwr = nan(nChans, nBands, nStages);
 
 for iBand = 1:nBands
-    fMask = Freqs >= bands{iBand,2}(1) & Freqs <= bands{iBand,2}(2);
-    if ~any(fMask), continue; end
+    fMaskRaw   = FreqsRaw   >= bands{iBand,2}(1) & FreqsRaw   <= bands{iBand,2}(2);
+    fMaskClean = FreqsClean >= bands{iBand,2}(1) & FreqsClean <= bands{iBand,2}(2);
+    if ~any(fMaskRaw) && ~any(fMaskClean), continue; end
     for iStage = 1:nStages
         sc    = availableStages(iStage);
         sMask = StageScoring == sc;
         if sc == 0, sMask = sMask | StageScoring == 5; end
         if ~any(sMask), continue; end
-        rawPwr(:,iBand,iStage)   = squeeze(mean(mean( ...
-            log10(PwrRaw(:,sMask,fMask)   + eps), 3), 2));
-        cleanPwr(:,iBand,iStage) = squeeze(mean(mean( ...
-            log10(PwrClean(:,sMask,fMask) + eps), 3), 2));
+        if any(fMaskRaw)
+            rawPwr(:,iBand,iStage)   = squeeze(mean(mean( ...
+                log10(PwrRaw(:,sMask,fMaskRaw)   + eps), 3), 2));
+        end
+        if any(fMaskClean)
+            cleanPwr(:,iBand,iStage) = squeeze(mean(mean( ...
+                log10(PwrClean(:,sMask,fMaskClean) + eps), 3), 2));
+        end
     end
 end
 

@@ -72,7 +72,7 @@ arguments
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
     opts.acqlabel    char               = '125Hz'
-    opts.noteegchannels    (1,:) double = 257:264
+    opts.noteegchannels    (1,:) double = 257:300
     opts.net               char         = 'EGI256'
 
     %--- Subject filter ---
@@ -87,17 +87,18 @@ arguments
 end
 
 KeepTime = struct();
-if isempty(opts.runs), opts.runs = gedai.defaultRuns(); end
+if isempty(opts.runs), opts.runs = gedai.defaultRuns(); 
+end
 
 %%% Query EEG files from BIDS (used for entity extraction and subject iteration)
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
     'task', opts.tasklabel, 'acq', opts.acqlabel);
-if isempty(filesEEG)
-    error('run_gedai_bids:noFiles', 'No matching EEG files found in BIDS layout.');
+if isempty(filesEEG); error('run_gedai_bids:noFiles', 'No matching EEG files found in BIDS layout.');
 end
 
 %%% Scoring files
-scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
+if ~isempty(opts.scoringpath); scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
+end
 
 %%% Loop over EEG files
 failures = {};
@@ -112,6 +113,8 @@ for ifile = 1:numel(filesEEG)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
+    
+    %%% Try block
     try
 
     %%% Resolve filtered input file
@@ -124,14 +127,19 @@ for ifile = 1:numel(filesEEG)
     fprintf('Output → %s\n', opts.savepath)
 
     %%% Find matching scoring file
+    if isempty(opts.scoringpath)
+        scoringpath = fullfile(BIDS.pth, subDir)
+        scoringfiles = gedai.collectScoringFiles(scoringpath);
+    end      
     scoringFile = gedai.matchScoringFile(p.entities, scoringfiles);
+    fprintf('Scoring → %s\n', scoringFile)
     if isempty(scoringFile)
         error('run_gedai_bids:noScoring', 'No scoring file matched for %s.', fileID);
     end
 
     %%% Load sleep scoring
     fprintf('\nReading %s ...\n', scoringFile)
-    scoringDigits = scoreloader(scoringFile);
+    scoringDigits = scoreloader(scoringFile);    
 
     %%% Import filtered EEG
     D = tic; fprintf('\nImporting filtered EEG ...\n')
@@ -152,6 +160,10 @@ for ifile = 1:numel(filesEEG)
         chanlocs     = readlocs(sfpFile);
         chanlocs_reg = register_fiducials(chanlocs);
         EEG.chanlocs = chanlocs_reg(1:EEG.nbchan);
+    elseif strcmp(BIDS.description.Name, {'ercp'})
+        chanfile = fullfile(fileparts(rawFile), [fileID, '_channels.tsv']);
+        elecfile = fullfile(fileparts(rawFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
+        [EEG, channelData, elecData] = bids_importchanlocs(EEG, chanfile, elecfile);
     else
         continue
     end
@@ -247,8 +259,6 @@ for ifile = 1:numel(filesEEG)
         KeepTime.GEDAI = toc(D);
         fprintf('GEDAI took %.2f min\n', KeepTime.GEDAI / 60)
 
-
-
         %%% JSON sidecar: GEDAI parameters + timing (only written on fresh runs)
         if isNewRun
             [~, bvBase] = fileparts(gedaiDatFile);
@@ -265,10 +275,10 @@ for ifile = 1:numel(filesEEG)
             'SavePath', fullfile(gedaiFigDir, fileID));
         close all;       
         
-        %%% Write savename marker
-        sidecarjson(KeepTime, ...
-            fullfile(gedaiFigDir, [savename '.json']), ...
-            struct('GEDAIParameters', r));
+%         %%% Write savename marker
+%         sidecarjson(KeepTime, ...
+%             fullfile(gedaiFigDir, [savename '.json']), ...
+%             struct('GEDAIParameters', r));
 
         %%% ICA residual
         if isfield(EEGgedai.etc, 'ic_classification')
@@ -294,6 +304,7 @@ if ~isempty(failures)
     for k = 1:numel(failures)
         fprintf('  %s: %s\n', failures{k}.fileID, failures{k}.message);
     end
+    if ~exist(opts.savepath, 'dir'), mkdir(opts.savepath); end
     fid = fopen(fullfile(opts.savepath, 'failed_files_gedai.json'), 'w');
     fprintf(fid, '%s', jsonencode([failures{:}]));
     fclose(fid);

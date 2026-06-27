@@ -37,7 +37,7 @@ arguments
     opts.tasklabel                       = {'Sleep', 'sleep'}
     opts.acqlabel   char                 = '125Hz'
     opts.noteegchannels   (1,:) double   = 257:264
-    opts.targetsrate      (1,1) double   = 125
+    opts.targetsrate      (1,1) double   = 0
     opts.removeDC         (1,1) logical  = true
     opts.zapline          (1,1) logical  = true
     opts.cleanline        (1,1) logical  = false
@@ -128,6 +128,7 @@ if ~isempty(failures)
     for k = 1:numel(failures)
         fprintf('  %s: %s\n', failures{k}.fileID, failures{k}.message);
     end
+    if ~exist(opts.savepath, 'dir'), mkdir(opts.savepath); end
     fid = fopen(fullfile(opts.savepath, 'failed_files_zapline.json'), 'w');
     fprintf(fid, '%s', jsonencode([failures{:}]));
     fclose(fid);

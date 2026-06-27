@@ -21,7 +21,7 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 arguments
     EEG                  struct
     opts.noteegchannels  (1,:) double  = 257:264
-    opts.targetsrate     (1,1) double  = 125
+    opts.targetsrate     (1,1) double  = 0
     opts.removeDC        (1,1) logical = true
     opts.zapline         (1,1) logical = true
     opts.KeepTime        struct        = struct()

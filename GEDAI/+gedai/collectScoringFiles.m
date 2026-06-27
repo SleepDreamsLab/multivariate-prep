@@ -1,6 +1,10 @@
 function files = collectScoringFiles(scoringBase)
 % JSON preferred, CSV fallback.
-    f = dir(fullfile(scoringBase, '**', '*.json'));
+    f = dir(fullfile(scoringBase, '**', '*.xml'));
+    if isempty(f); 
+        f = dir(fullfile(scoringBase, '**', '*.json'));
+    end
+        
     if isempty(f); 
         f = dir(fullfile(scoringBase, '**', '*.csv')); 
         f = f(~endsWith({f.name}, 'events.csv'));

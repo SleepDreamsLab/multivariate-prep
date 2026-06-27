@@ -47,7 +47,7 @@ arguments
     %--- Input paths ---
     opts.filteredpath     char = fullfile(BIDS.pth, 'derivatives', 'preprocessing')
     opts.filtdesc         char = 'filt'
-    opts.scoringpath      char = fullfile(BIDS.pth, 'derivatives', 'scoring', 'scores', 'Manual_Checked')
+    opts.scoringpath      char = []
     opts.sfppath          char = BIDS.pth
 
     %--- Output paths ---
@@ -57,7 +57,7 @@ arguments
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
     opts.acqlabel   char         = '125Hz'
-    opts.noteegchannels   (1,:) double = 257:264
+    opts.noteegchannels   (1,:) double = 257:300
     opts.net              char         = 'EGI256'
 
     %--- Subject filter ---
@@ -75,7 +75,9 @@ if isempty(filesEEG)
 end
 
 %%% Scoring files
-scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
+if ~isempty(opts.scoringpath)
+    scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
+end
 
 %%% Loop over EEG files
 failures = {};
@@ -90,7 +92,7 @@ for ifile = 1:numel(filesEEG)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
-    try
+%     try
 
     %%% Resolve filtered file
     filtFile = fullfile(opts.filteredpath, subDir, [fileID '_desc-' opts.filtdesc '_eeg.vhdr']);
@@ -101,6 +103,10 @@ for ifile = 1:numel(filesEEG)
     fprintf('Raw    → %s\nFilt   → %s\n', rawFile, filtFile)
 
     %%% Find and load scoring
+    if isempty(opts.scoringpath)
+        scoringpath = fullfile(BIDS.pth, subDir)
+        scoringfiles = gedai.collectScoringFiles(scoringpath);
+    end    
     scoringFile = gedai.matchScoringFile(p.entities, scoringfiles);
     if isempty(scoringFile)
         error('eval_filt_bids:noScoring', 'No scoring file matched for %s.', fileID);
@@ -108,22 +114,36 @@ for ifile = 1:numel(filesEEG)
     fprintf('Scoring → %s\n', scoringFile)
     scoringDigits = scoreloader(scoringFile);
 
-    %%% Load SFP
-    sfpFile      = gedai.matchSfpFile(opts.sfppath, p.entities.sub, p.entities.ses);
-    fprintf('SFP     → %s\n', sfpFile)
-    chanlocs_reg = register_fiducials(readlocs(sfpFile));
-
     %%% Import raw EEG
     fprintf('Importing raw EEG ...\n')
-    EEGraw = eeg_import(rawFile);
+    EEGraw = eeg_import(rawFile);    
+
+    %%% Load SFP
+    if strcmp(BIDS.description.Name, {'ercp'})
+        chanfile = fullfile(fileparts(rawFile), [fileID, '_channels.tsv']);
+        elecfile = fullfile(fileparts(rawFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
+        [EEGraw, channelData, elecData] = bids_importchanlocs(EEGraw, chanfile, elecfile);
+        chanlocs = EEGraw.chanlocs;
+    else
+        sfpFile      = gedai.matchSfpFile(opts.sfppath, p.entities.sub, p.entities.ses);
+        fprintf('SFP     → %s\n', sfpFile)
+        chanlocs = register_fiducials(readlocs(sfpFile));
+%     catch
+%         elecfile = dir(fullfile(fileparts(rawFile), '*_electrodes.tsv'));
+%         chanlocs = bids_loadfile(chanlocs(elecfile(1).folder, elecfile(1).name))
+% %         chanlocs = readlocs(fullfile(pwd, chanlocs, [BIDS.description.Name '.tsv']), '');
+    end   
+        
+    %%% Extract channels
     EEGraw = pop_select(EEGraw, 'nochannel', intersect(1:EEGraw.nbchan, opts.noteegchannels));
-    EEGraw.chanlocs   = chanlocs_reg(1:EEGraw.nbchan);
+    EEGraw.chanlocs   = chanlocs(1:EEGraw.nbchan);
     EEGraw.urchanlocs = EEGraw.chanlocs;
 
     %%% Import filtered EEG
     fprintf('Importing filtered EEG ...\n')
     EEGfilt = eeg_import(filtFile);
-    EEGfilt.chanlocs   = chanlocs_reg(1:EEGfilt.nbchan);
+    EEGfilt = pop_select(EEGfilt, 'nochannel', intersect(1:EEGfilt.nbchan, opts.noteegchannels));    
+    EEGfilt.chanlocs   = chanlocs(1:EEGfilt.nbchan);
     EEGfilt.urchanlocs = EEGfilt.chanlocs;
 
 %     %%% Trim scoring to match filtered EEG epoch count
@@ -141,10 +161,10 @@ for ifile = 1:numel(filesEEG)
         'refresh', opts.refresh, 'net', opts.net);
     close all;
 
-    catch ME
-        fprintf('[ERROR] %s: %s\n', fileID, ME.message);
-        failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
-    end
+%     catch ME
+%         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
+%         failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
+%     end
 end
 
 %%% Failure summary
@@ -153,6 +173,7 @@ if ~isempty(failures)
     for k = 1:numel(failures)
         fprintf('  %s: %s\n', failures{k}.fileID, failures{k}.message);
     end
+    if ~exist(opts.figpath, 'dir'), mkdir(opts.figpath); end
     fid = fopen(fullfile(opts.figpath, 'failed_files_evalfilt.json'), 'w');
     fprintf(fid, '%s', jsonencode([failures{:}]));
     fclose(fid);
