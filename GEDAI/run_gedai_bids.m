@@ -1,4 +1,4 @@
-function run_gedai_bids(BIDS, opts)
+function failures = run_gedai_bids(BIDS, opts)
 % RUN_GEDAI_BIDS  Run GEDAI artefact-rejection on pre-filtered BIDS EEG data.
 %
 %   run_gedai_bids(BIDS)
@@ -100,6 +100,7 @@ end
 scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
 
 %%% Loop over EEG files
+failures = {};
 for ifile = 1:numel(filesEEG)
     eegFile = filesEEG{ifile};
     p       = bids.internal.parse_filename(eegFile);
@@ -111,6 +112,7 @@ for ifile = 1:numel(filesEEG)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
+    try
 
     %%% Resolve filtered input file
     filtFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.inputdesc '_eeg.vhdr']);
@@ -279,6 +281,22 @@ for ifile = 1:numel(filesEEG)
             close all;
         end
     end
+
+    catch ME
+        fprintf('[ERROR] %s: %s\n', fileID, ME.message);
+        failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
+    end
+end
+
+%%% Failure summary
+if ~isempty(failures)
+    fprintf('\n=== %d file(s) failed ===\n', numel(failures));
+    for k = 1:numel(failures)
+        fprintf('  %s: %s\n', failures{k}.fileID, failures{k}.message);
+    end
+    fid = fopen(fullfile(opts.savepath, 'failed_files_gedai.json'), 'w');
+    fprintf(fid, '%s', jsonencode([failures{:}]));
+    fclose(fid);
 end
 
 end % run_gedai_bids

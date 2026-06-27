@@ -1,4 +1,4 @@
-function run_filter_bids(BIDS, opts)
+function failures = run_filter_bids(BIDS, opts)
 % RUN_FILTER_BIDS  Preprocess BIDS EEG files: import, resample, DC removal, Zapline.
 %   Results are saved as BrainVision files under
 %   <BIDS root>/derivatives/preprocessing/<sub>/<ses>/.
@@ -35,7 +35,7 @@ arguments
 
     %--- EEG ---
     opts.tasklabel                       = {'Sleep', 'sleep'}
-    opts.acqlabel   char           = '125Hz'
+    opts.acqlabel   char                 = '125Hz'
     opts.noteegchannels   (1,:) double   = 257:264
     opts.targetsrate      (1,1) double   = 125
     opts.removeDC         (1,1) logical  = true
@@ -55,6 +55,7 @@ if isempty(filesEEG)
 end
 
 %%% Loop over EEG files
+failures = {};
 for ifile = 1:numel(filesEEG)
     eegFile = filesEEG{ifile};
     p       = bids.internal.parse_filename(eegFile);
@@ -65,6 +66,7 @@ for ifile = 1:numel(filesEEG)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
+    try
 
     %%% Build output paths
     outDir   = fullfile(opts.savepath, ['sub-' p.entities.sub], ['ses-' p.entities.ses]);
@@ -113,5 +115,21 @@ for ifile = 1:numel(filesEEG)
     %%% JSON timing sidecar
     [~, baseName] = fileparts(outFile);
     sidecarjson(KeepTime, fullfile(outDir, [baseName '.json']));
+
+    catch ME
+        fprintf('[ERROR] %s: %s\n', fileID, ME.message);
+        failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
+    end
+end
+
+%%% Failure summary
+if ~isempty(failures)
+    fprintf('\n=== %d file(s) failed ===\n', numel(failures));
+    for k = 1:numel(failures)
+        fprintf('  %s: %s\n', failures{k}.fileID, failures{k}.message);
+    end
+    fid = fopen(fullfile(opts.savepath, 'failed_files_zapline.json'), 'w');
+    fprintf(fid, '%s', jsonencode([failures{:}]));
+    fclose(fid);
 end
 end

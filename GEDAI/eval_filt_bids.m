@@ -1,4 +1,4 @@
-function eval_filt_bids(BIDS, opts)
+function failures = eval_filt_bids(BIDS, opts)
 % EVAL_FILT_BIDS  Evaluate filtering quality by comparing raw and filtered EEG.
 %
 %   eval_filt_bids(BIDS)
@@ -29,7 +29,7 @@ function eval_filt_bids(BIDS, opts)
 %   EEG
 %   ---
 %   tasklabel         BIDS task label(s) to query. Default: {'Sleep','sleep'}.
-%   recordinglabel    BIDS acq label to query. Default: '125Hz'.
+%   acqlabel    BIDS acq label to query. Default: '125Hz'.
 %   noteegchannels    Channel indices to drop from raw EEG. Default: 257:264.
 %   net               EEG net identifier passed to chans1020. Default: 'EGI256'.
 %
@@ -56,7 +56,7 @@ arguments
 
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
-    opts.recordinglabel   char         = '125Hz'
+    opts.acqlabel   char         = '125Hz'
     opts.noteegchannels   (1,:) double = 257:264
     opts.net              char         = 'EGI256'
 
@@ -69,7 +69,7 @@ end
 
 %%% Query raw EEG files from BIDS
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
-    'task', opts.tasklabel, 'acq', opts.recordinglabel);
+    'task', opts.tasklabel, 'acq', opts.acqlabel);
 if isempty(filesEEG)
     error('eval_filt_bids:noFiles', 'No matching EEG files found in BIDS layout.');
 end
@@ -78,6 +78,7 @@ end
 scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
 
 %%% Loop over EEG files
+failures = {};
 for ifile = 1:numel(filesEEG)
     rawFile = filesEEG{ifile};
     p       = bids.internal.parse_filename(rawFile);
@@ -89,6 +90,7 @@ for ifile = 1:numel(filesEEG)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
+    try
 
     %%% Resolve filtered file
     filtFile = fullfile(opts.filteredpath, subDir, [fileID '_desc-' opts.filtdesc '_eeg.vhdr']);
@@ -138,5 +140,21 @@ for ifile = 1:numel(filesEEG)
         'SavePath', fullfile(figDir, fileID), ...
         'refresh', opts.refresh, 'net', opts.net);
     close all;
+
+    catch ME
+        fprintf('[ERROR] %s: %s\n', fileID, ME.message);
+        failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
+    end
+end
+
+%%% Failure summary
+if ~isempty(failures)
+    fprintf('\n=== %d file(s) failed ===\n', numel(failures));
+    for k = 1:numel(failures)
+        fprintf('  %s: %s\n', failures{k}.fileID, failures{k}.message);
+    end
+    fid = fopen(fullfile(opts.figpath, 'failed_files_evalfilt.json'), 'w');
+    fprintf(fid, '%s', jsonencode([failures{:}]));
+    fclose(fid);
 end
 end
