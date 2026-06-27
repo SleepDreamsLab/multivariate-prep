@@ -1,36 +1,35 @@
-function [EEG, KeepTime] = run_filter(eegFile, opts)
-% RUN_FILTER  Import EEG from file, resample, remove DC offset, and suppress line noise.
+function [EEG, KeepTime] = run_filter(EEG, opts)
+% RUN_FILTER  Resample, remove DC offset, and suppress line noise on an EEG struct.
 %
 % USAGE:
-%   EEG = run.run_filter(eegFile)
-%   [EEG, KeepTime] = run.run_filter(eegFile, removeDC=true, removeLN=true)
+%   EEG = run.run_filter(EEG)
+%   [EEG, KeepTime] = run.run_filter(EEG, removeDC=true, zapline=true)
 %
 % INPUTS:
-%   eegFile   — full path to an EEG file readable by eeg_import (.vhdr etc.)
+%   EEG   — EEGLAB EEG struct (already imported by the caller)
 %
 % OPTIONAL NAME-VALUE:
 %   noteegchannels  channel indices to drop before processing  (default 257:264)
 %   targetsrate     resample to this rate in Hz; 0 = skip      (default 125)
 %   removeDC        apply DC-removal filter                    (default true)
-%   removeLN        apply Zapline-plus line-noise removal      (default true)
+%   zapline        apply Zapline-plus line-noise removal      (default true)
+%   KeepTime        struct of prior timings to merge into the output (default [])
+%   cleanline       apply CleanLine after Zapline               (default true)
 %   JsonFile        full path for a JSON sidecar with processing timings;
 %                   '' = skip                                  (default '')
 
 arguments
-    eegFile              (1,1) string
+    EEG                  struct
     opts.noteegchannels  (1,:) double  = 257:264
     opts.targetsrate     (1,1) double  = 125
     opts.removeDC        (1,1) logical = true
-    opts.removeLN        (1,1) logical = true
+    opts.zapline         (1,1) logical = true
+    opts.KeepTime        struct        = struct()
+    opts.cleanline       (1,1) logical = true
     opts.JsonFile        (1,1) string  = ""
 end
 
-KeepTime = struct();
-
-%%% Import EEG
-D = tic; fprintf('\nEEG import ...\n')
-EEG = eeg_import(char(eegFile));
-KeepTime.EEGimport = toc(D);
+KeepTime = opts.KeepTime;
 
 %%% Drop non-EEG channels
 EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
@@ -54,14 +53,48 @@ if opts.removeDC
 end
 
 %%% Zapline
-if opts.removeLN
+if opts.zapline
     D = tic; fprintf('\nZapline plus ...\n')
-    [EEG.data, ~, ~] = clean_data_with_zapline_plus( ...
-        EEG.data, EEG.srate, ...
+    [EEG.data, zaplineConfig, analyticsResults] = clean_data_with_zapline_plus( ...
+        double(EEG.data), EEG.srate, ...
         'noisefreqs', 'line', ...
+        'maxfreq', floor(EEG.srate/2) - 5, ...   % let zapline search up to Nyquist itself, not just default 99 Hz        
         'plotResults', 0);
     KeepTime.Zapline = toc(D);
     fprintf('ZapLine-plus: %.2f min\n', KeepTime.Zapline / 60);
+end
+
+%%% Cleanline
+if opts.cleanline 
+
+    % base CleanLine directly on what ZapLine actually found and treated
+    linefreqs = zaplineConfig.noisefreqs;
+    fprintf('ZapLine-plus detected and cleaned: %s Hz\n', mat2str(round(linefreqs,2)));
+
+    % only pass freqs that had a real noise ratio to CleanLine
+    keepIdx = analyticsResults.ratioNoiseRaw > 1.5;   % adjust threshold based on what you see
+    linefreqs = zaplineConfig.noisefreqs(keepIdx);
+    fprintf('Only keep those with noise ratio >1.5: %s Hz\n', mat2str(round(linefreqs,2)));
+
+    D = tic; fprintf('\nClean line ...\n')
+    EEG.data = double(EEG.data);
+    EEG = pop_cleanline(EEG, ...
+        'bandwidth', 2, ...
+        'chanlist', 1:EEG.nbchan, ...
+        'computepower', 1, ...
+        'linefreqs', linefreqs, ...
+        'normSpectrum', 0, ...
+        'p', 0.01, ...
+        'pad', 2, ...
+        'plotfigures', 0, ...
+        'scanforlines', 1, ...
+        'sigtype', 'Channels', ...
+        'tau', 100, ...
+        'verb', 1, ...
+        'winsize', 4, ...
+        'winstep', 2);
+    KeepTime.Cleanline = toc(D);
+
 end
 
 %%% Write JSON sidecar

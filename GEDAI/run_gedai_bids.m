@@ -35,7 +35,7 @@ function run_gedai_bids(BIDS, opts)
 %   EEG
 %   ---
 %   tasklabel         BIDS task label(s) to query. Default: {'Sleep','sleep'}.
-%   recordinglabel    BIDS recording label to query. Default: '125Hz'.
+%   acqlabel    BIDS recording label to query. Default: '125Hz'.
 %   noteegchannels    Channel indices to drop. Default: 257:264.
 %   net               EEG net identifier passed to chans1020. Default: 'EGI256'.
 %
@@ -58,7 +58,7 @@ arguments
 
     %--- Input paths ---
     opts.inputpath     char = fullfile(BIDS.pth, 'derivatives', 'preprocessing')
-    opts.inputdesc         char = 'filt'
+    opts.inputdesc        char = 'filt'
     opts.scoringpath      char = fullfile(BIDS.pth, 'derivatives', 'scoring', 'scores', 'Manual_Checked')
     opts.sfppath          char = BIDS.pth
     opts.leadfielddir     char = fullfile(BIDS.pth, '..', 'Data_Analysis', 'Brainstorm_db', 'Leadfield_PM', 'data')
@@ -66,12 +66,12 @@ arguments
     %--- Output paths ---
     opts.savepath         char = fullfile(BIDS.pth, 'derivatives', 'preprocessing')
     opts.figpath          char = fullfile(BIDS.pth, 'derivatives', 'preprocessing', 'figures')
-    opts.geddesc          char = 'filtGEDAI'
+    opts.geddesc          char = 'filt2ged'
     opts.refresh (1,1) logical = false
 
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
-    opts.recordinglabel    char         = '125Hz'
+    opts.acqlabel    char               = '125Hz'
     opts.noteegchannels    (1,:) double = 257:264
     opts.net               char         = 'EGI256'
 
@@ -91,7 +91,7 @@ if isempty(opts.runs), opts.runs = gedai.defaultRuns(); end
 
 %%% Query EEG files from BIDS (used for entity extraction and subject iteration)
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
-    'task', opts.tasklabel, 'acq', opts.recordinglabel);
+    'task', opts.tasklabel, 'acq', opts.acqlabel);
 if isempty(filesEEG)
     error('run_gedai_bids:noFiles', 'No matching EEG files found in BIDS layout.');
 end
@@ -164,17 +164,15 @@ for ifile = 1:numel(filesEEG)
     EEG = chans1020(EEG, false, 'net', opts.net);
 
     %%% Bad channel detection
-    badchanDir    = fullfile(opts.savepath, subDir, 'BadChannels');
-    badchanFigDir = fullfile(opts.figpath, 'badchans', subDir);
-
     D = tic;
     [removed_channels, corr, znoise] = smartcache( ...
         @() clean_channels(EEG, 0.7, 4, [], 0.5, 25), ...
-        fullfile(badchanDir, ['BadChans_' fileID '.mat']), ...
+        fullfile(opts.savepath, subDir, [fileID '_badchans.mat']), ...
         false, {'', 'removed_channels', 'corr', 'znoise'});
     KeepTime.BadChannelDetection = toc(D);
 
     %%% Bad channel figure
+    badchanFigDir = fullfile(opts.figpath, 'badchans', subDir);
     if ~exist(badchanFigDir, 'dir'), mkdir(badchanFigDir); end
     gedai.plotBadChannels(corr, znoise, EEG.chanlocs, ...
         fullfile(badchanFigDir, [fileID '_BadChannelTopoplot.png']));
@@ -208,12 +206,21 @@ for ifile = 1:numel(filesEEG)
                 stageLogic      = {[-3:1]};
                 refCOV_perStage = {lfCOV};
         end
+
+        %%% Drop stage groups absent from scoring
+        presentStages   = unique(scoringDigits_NoN1);
+        keep            = cellfun(@(s) any(ismember(s, presentStages)), stageLogic);
+        stageLogic      = stageLogic(keep);
+        refCOV_perStage = refCOV_perStage(keep);
+
         fprintf('Run %d/%d: %s\n', iRun, numel(opts.runs), savename)
 
         %%% Paths for this run
-        gedaiRunDir  = fullfile(opts.savepath, subDir, savename);
-        gedaiFigDir  = fullfile(opts.figpath, 'gedai', savename, fileID);
+        gedaiRunDir  = fullfile(opts.savepath, subDir);
+        gedaiFigDir  = fullfile(opts.figpath, ['desc-' opts.geddesc], fileID);
         gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' opts.geddesc '_eeg.dat']);
+
+
 
         %%% Run GEDAI (cached as BrainVision .dat)
         clear EEGgedai
@@ -238,6 +245,8 @@ for ifile = 1:numel(filesEEG)
         KeepTime.GEDAI = toc(D);
         fprintf('GEDAI took %.2f min\n', KeepTime.GEDAI / 60)
 
+
+
         %%% JSON sidecar: GEDAI parameters + timing (only written on fresh runs)
         if isNewRun
             [~, bvBase] = fileparts(gedaiDatFile);
@@ -252,8 +261,14 @@ for ifile = 1:numel(filesEEG)
             'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
             'EpochsToPlot', epochsToPlot, 'refresh', opts.refresh, ...
             'SavePath', fullfile(gedaiFigDir, fileID));
-        close all;
+        close all;       
+        
+        %%% Write savename marker
+        sidecarjson(KeepTime, ...
+            fullfile(gedaiFigDir, [savename '.json']), ...
+            struct('GEDAIParameters', r));
 
+        %%% ICA residual
         if isfield(EEGgedai.etc, 'ic_classification')
             EEGgedai = ica.selectcomps(EEGgedai, 'ArtefactThreshold', 0.5, 'ManualQC', false);
             EEGgedai = pop_subcomp(EEGgedai, find(EEGgedai.reject.gcompreject), 0);
