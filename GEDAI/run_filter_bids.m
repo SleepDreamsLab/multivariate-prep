@@ -130,7 +130,7 @@ if ~isempty(failures)
     end
     if ~exist(opts.savepath, 'dir'), mkdir(opts.savepath); end
     fid = fopen(fullfile(opts.savepath, 'failed_files_zapline.json'), 'w');
-    fprintf(fid, '%s', jsonencode([failures{:}]));
+    fprintf(fid, '%s', jsonencode([failures{:}], 'PrettyPrint', true));
     fclose(fid);
 end
 end

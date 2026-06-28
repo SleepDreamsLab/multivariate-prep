@@ -27,7 +27,8 @@ arguments
     opts.SavePath                  = ''
 end
 
-epochSamples = round(opts.EpochLength * EEGclean.srate);
+epochSamplesRaw   = round(opts.EpochLength * EEGstage.srate);
+epochSamplesClean = round(opts.EpochLength * EEGclean.srate);
 stageScoring = StageScoring(:)';
 uniqueStages = unique(stageScoring);
 
@@ -64,12 +65,15 @@ offsets    = (nPlotChans-1:-1:0) * opts.ChanOffset;
 for iEp = epochsToPlot
     if iEp < 1 || iEp > numel(stageScoring), continue; end
 
-    epSamps = (iEp-1)*epochSamples + (1:epochSamples);
-    if epSamps(end) > size(EEGclean.data, 2), continue; end
+    epSampsRaw   = (iEp-1)*epochSamplesRaw   + (1:epochSamplesRaw);
+    epSampsClean = (iEp-1)*epochSamplesClean + (1:epochSamplesClean);
+    if epSampsRaw(end)   > size(EEGstage.data, 2), continue; end
+    if epSampsClean(end) > size(EEGclean.data, 2), continue; end
 
-    t_s      = (0:epochSamples-1) / EEGclean.srate;
-    rawEp    = EEGstage.data(displayChans, epSamps);
-    cleanEp  = EEGclean.data(displayChans, epSamps);
+    t_raw    = (0:epochSamplesRaw-1)   / EEGstage.srate;
+    t_clean  = (0:epochSamplesClean-1) / EEGclean.srate;
+    rawEp    = EEGstage.data(displayChans, epSampsRaw);
+    cleanEp  = EEGclean.data(displayChans, epSampsClean);
     stageLbl = stage_name(stageScoring(iEp));
 
     fig = figure('Color', 'w', 'Units', 'centimeters', ...
@@ -79,19 +83,19 @@ for iEp = epochsToPlot
     nexttile; hold on;
 
     for iCh = 1:nPlotChans
-        plot(t_s, rawEp(iCh,:)   + offsets(iCh), 'Color', colorRaw,   ...
+        plot(t_raw,   rawEp(iCh,:)   + offsets(iCh), 'Color', colorRaw,   ...
             'LineWidth', lw_raw,   'HandleVisibility', 'off');
-        plot(t_s, cleanEp(iCh,:) + offsets(iCh), 'Color', colorClean, ...
+        plot(t_clean, cleanEp(iCh,:) + offsets(iCh), 'Color', colorClean, ...
             'LineWidth', lw_clean, 'HandleVisibility', 'off');
     end
     yline(offsets, ':', 'HandleVisibility', 'off');
 
     % Amplitude scale bar — centred at the bottom channel's baseline
     scaleAmp = 100;                    % µV
-    sx       = t_s(end) * 0.985;
+    sx       = opts.EpochLength * 0.985;
     sy0      = offsets(end) - scaleAmp/2;
     sy1      = offsets(end) + scaleAmp/2;
-    capLen   = t_s(end) * 0.004;
+    capLen   = opts.EpochLength * 0.004;
     line([sx sx],                   [sy0 sy1], 'Color', 'k', 'LineWidth', 2,   'HandleVisibility', 'off');
     line([sx-capLen sx+capLen], [sy0 sy0],     'Color', 'k', 'LineWidth', 2,   'HandleVisibility', 'off');
     line([sx-capLen sx+capLen], [sy1 sy1],     'Color', 'k', 'LineWidth', 2,   'HandleVisibility', 'off');
@@ -104,7 +108,7 @@ for iEp = epochsToPlot
     legend('Location', 'northeast', 'FontSize', 9, 'Box', 'off');
     set(gca, 'YTick', fliplr(offsets), 'YTickLabel', fliplr(plotNames), ...
         'FontSize', 9, 'Box', 'off', 'TickDir', 'out');
-    xlim([0 t_s(end)]);
+    xlim([0 opts.EpochLength]);
     xtickformat(gca, '%g s');
     title(sprintf('Epoch %d — %s', iEp, stageLbl), 'FontSize', 11, 'FontWeight', 'bold');
     ylim([opts.ChanOffset * -1, nPlotChans * opts.ChanOffset]);

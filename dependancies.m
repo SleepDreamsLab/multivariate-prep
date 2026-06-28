@@ -1,8 +1,6 @@
 
 % External dependancies ---------------------------------------------------
 % *************************************************************************
-addpath(genpath(pwd))
-
 % GEDAI
 addpath(genpath('..\GEDAI-master')) % https://github.com/SvennoNito/dusk2dawn
 
@@ -29,3 +27,11 @@ if exist('pop_loadset', 'file') ~= 2
     % call EEGLAB and close the pop-up window.
     eeglab; close;
 end
+
+% This folder
+addpath('qol')
+addpath('patches')
+addpath('GEDAI')
+addpath('BidsFiles')
+addpath('chanlocs')
+

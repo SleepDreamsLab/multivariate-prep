@@ -92,7 +92,7 @@ for ifile = 1:numel(filesEEG)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
-%     try
+    try
 
     %%% Resolve filtered file
     filtFile = fullfile(opts.filteredpath, subDir, [fileID '_desc-' opts.filtdesc '_eeg.vhdr']);
@@ -104,7 +104,7 @@ for ifile = 1:numel(filesEEG)
 
     %%% Find and load scoring
     if isempty(opts.scoringpath)
-        scoringpath = fullfile(BIDS.pth, subDir)
+        scoringpath = fullfile(BIDS.pth, subDir);
         scoringfiles = gedai.collectScoringFiles(scoringpath);
     end    
     scoringFile = gedai.matchScoringFile(p.entities, scoringfiles);
@@ -117,6 +117,11 @@ for ifile = 1:numel(filesEEG)
     %%% Import raw EEG
     fprintf('Importing raw EEG ...\n')
     EEGraw = eeg_import(rawFile);    
+
+    %%% Correct scoring length if needed
+    nEpochs = floor(EEGraw.pnts / (opts.epochlength * EEGraw.srate));
+    while numel(scoringDigits) > nEpochs; scoringDigits(end) = []; end
+    
 
     %%% Load SFP
     if strcmp(BIDS.description.Name, {'ercp'})
@@ -161,10 +166,10 @@ for ifile = 1:numel(filesEEG)
         'refresh', opts.refresh, 'net', opts.net);
     close all;
 
-%     catch ME
-%         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
-%         failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
-%     end
+    catch ME
+        fprintf('[ERROR] %s: %s\n', fileID, ME.message);
+        failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
+    end
 end
 
 %%% Failure summary
@@ -175,7 +180,7 @@ if ~isempty(failures)
     end
     if ~exist(opts.figpath, 'dir'), mkdir(opts.figpath); end
     fid = fopen(fullfile(opts.figpath, 'failed_files_evalfilt.json'), 'w');
-    fprintf(fid, '%s', jsonencode([failures{:}]));
+    fprintf(fid, '%s', jsonencode([failures{:}], 'PrettyPrint', true));
     fclose(fid);
 end
 end

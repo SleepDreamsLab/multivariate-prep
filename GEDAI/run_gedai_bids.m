@@ -128,7 +128,7 @@ for ifile = 1:numel(filesEEG)
 
     %%% Find matching scoring file
     if isempty(opts.scoringpath)
-        scoringpath = fullfile(BIDS.pth, subDir)
+        scoringpath = fullfile(BIDS.pth, subDir);
         scoringfiles = gedai.collectScoringFiles(scoringpath);
     end      
     scoringFile = gedai.matchScoringFile(p.entities, scoringfiles);
@@ -306,7 +306,7 @@ if ~isempty(failures)
     end
     if ~exist(opts.savepath, 'dir'), mkdir(opts.savepath); end
     fid = fopen(fullfile(opts.savepath, 'failed_files_gedai.json'), 'w');
-    fprintf(fid, '%s', jsonencode([failures{:}]));
+    fprintf(fid, '%s', jsonencode([failures{:}], 'PrettyPrint', true));
     fclose(fid);
 end
 
