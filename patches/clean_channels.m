@@ -87,9 +87,9 @@ fprintf('Scanning for bad channels...\n');
 
 if signal.srate > 100
     % remove signal content above 50Hz
-    B = design_fir(100,[2*[0 45 50]/signal.srate 1],[1 1 0 0]);
+    B = firls(100,[2*[0 45 50]/signal.srate 1],[1 1 0 0]);
     for c=signal.nbchan:-1:1
-        X(:,c) = filtfilt_fast(B,1,signal.data(c,:)'); end
+        X(:,c) = filtfilt(B,1,signal.data(c,:)'); end
     % determine z-scored level of EM noise-to-signal ratio for each channel
     noisiness = mad(signal.data'-X)./mad(X,1);
     znoise = (noisiness - median(noisiness)) ./ (mad(noisiness,1)*1.4826);        
@@ -113,11 +113,7 @@ X = X(:,usable_channels);
 if reset_rng
     rng('default')
 end
-if exist('OCTAVE_VERSION', 'builtin') == 0
-    P = hlp_microcache('cleanchans',@calc_projector,locs,num_samples,subset_size);
-else
-    P = calc_projector(locs,num_samples,subset_size);
-end
+P = calc_projector(locs,num_samples,subset_size);
 corrs = zeros(length(usable_channels),W);
         
 % calculate each channel's correlation to its RANSAC reconstruction for each window
