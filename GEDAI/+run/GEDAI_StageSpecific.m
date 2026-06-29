@@ -184,8 +184,8 @@ EEGclean.etc.GEDAI = G;
 
 % ── 4. Restore original epoch order ──────────────────────────────────────
 [epochIdx, sortOrder] = sort(epochIdx);
-EEGclean = gedai.utils.resequence_epochs(EEGclean, sortOrder);
-EEGstage = gedai.utils.resequence_epochs(EEGstage, sortOrder);
+EEGclean = utils.resequence_epochs(EEGclean, sortOrder);
+EEGstage = utils.resequence_epochs(EEGstage, sortOrder);
 
 % EEGclean.etc.gedaiMeta = gedaiMetrics;
 

@@ -60,14 +60,14 @@ for iScale = 1:nScales
         epochsClean = squeeze(log10(PwrClean(ChanIdx, mask, fMaskClean)));
         if isvector(epochsRaw),   epochsRaw   = epochsRaw(:)';   end
         if isvector(epochsClean), epochsClean = epochsClean(:)'; end
-        plot(FreqsRaw(fMaskRaw),     epochsRaw',   '-', 'Color', [0.65 0.65 0.65 0.25], ...
+        plot(FreqsRaw(fMaskRaw),     epochsRaw',   '-', 'Color', [0.65 0.65 0.65 0.3], ...
             'LineWidth', 0.4, 'HandleVisibility', 'off');
-        plot(FreqsClean(fMaskClean), epochsClean', '-', 'Color', [stage_color(d), 0.25], ...
+        plot(FreqsClean(fMaskClean), epochsClean', '-', 'Color', [stage_color(d), 0.3], ...
             'LineWidth', 0.4, 'HandleVisibility', 'off');
 
-        plot(FreqsRaw(fMaskRaw),     meanRaw,   '--', 'Color', [0.65 0.65 0.65], ...
-            'LineWidth', 1.4, 'DisplayName', 'before GEDAI');
-        plot(FreqsClean(fMaskClean), meanClean, '-',  'Color', stage_color(d), ...
+        plot(FreqsRaw(fMaskRaw),     meanRaw,   '-', 'Color', [0.65 0.65 0.65], ...
+            'LineWidth', 1.6, 'DisplayName', 'before GEDAI');
+        plot(FreqsClean(fMaskClean), meanClean, '-',  'Color', 'k', ...
             'LineWidth', 2.0, 'DisplayName', 'after GEDAI');
 
         if iStage == 1
@@ -81,7 +81,7 @@ for iScale = 1:nScales
         legend('Location', 'northeast', 'FontSize', 9, 'Box', 'off');
         set(gca, 'FontSize', 10, 'Box', 'off', 'TickDir', 'out');
         grid on; set(gca, 'GridAlpha', 0.15, 'GridLineStyle', ':');
-        xlim(opts.FreqLim); ylim([-8 3]);
+        xlim(opts.FreqLim); ylim([-8 4]);
         apply_freq_scale(gca, sc, logXLim, pow2ticks);
     end
 end

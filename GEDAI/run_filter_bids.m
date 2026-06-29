@@ -30,6 +30,7 @@ arguments
 
     %--- Paths ---
     opts.savepath         char    = fullfile(BIDS.pth, 'derivatives', 'preprocessing')
+    opts.figpath          char    = fullfile(BIDS.pth, 'derivatives', 'preprocessing', 'figures')
     opts.refresh (1,1)    logical = false
     opts.desc             char    = 'filt'
 
@@ -42,6 +43,13 @@ arguments
     opts.zapline          (1,1) logical  = true
     opts.cleanline        (1,1) logical  = false
     opts.zapline2         (1,1) logical  = true
+    opts.noisefreqs                      = 'line'
+    opts.adaptiveNremove  (1,1) logical  = true
+    opts.fixedNremove     (1,1) double   = 1
+    opts.chunkLength      (1,1) double   = 0
+    opts.minfreq          (1,1) double   = 17
+    opts.maxfreq          (1,1) double   = 0
+    opts.plotResults      (1,1) logical  = true
 
     %--- Subject filter ---
     opts.subjectfilter    cell            = {}
@@ -69,8 +77,11 @@ for ifile = 1:numel(filesEEG)
     try
 
     %%% Build output paths
-    outDir   = fullfile(opts.savepath, ['sub-' p.entities.sub], ['ses-' p.entities.ses]);
+    subDir   = fullfile(['sub-' p.entities.sub], ['ses-' p.entities.ses]);
+    outDir   = fullfile(opts.savepath, subDir);
     outFile  = fullfile(outDir, [fileID '_desc-' opts.desc '_eeg.dat']);
+    figDir   = fullfile(opts.figpath, ['desc-' opts.desc], subDir);
+    if ~exist(figDir, 'dir'), mkdir(figDir); end
     fprintf('Output → %s\n', outFile)
 
     %%% Skip if already processed and refresh not requested
@@ -87,6 +98,11 @@ for ifile = 1:numel(filesEEG)
     EEG = eeg_import(eegFile);
     KeepTime = struct('EEGimport', toc(D));
 
+    %%%
+    if opts.maxfreq == 0
+        opts.maxfreq = floor(EEG.srate/2) - 5;
+    end
+
     %%% Run filter pipeline
     [EEG, KeepTime] = run.run_filter(EEG, ...
         'noteegchannels', opts.noteegchannels, ...
@@ -94,19 +110,39 @@ for ifile = 1:numel(filesEEG)
         'removeDC',       opts.removeDC, ...
         'zapline',        opts.zapline, ...
         'cleanline',      opts.cleanline, ...
-        'KeepTime',       KeepTime);
+        'KeepTime',        KeepTime, ...
+        'noisefreqs',      opts.noisefreqs, ...
+        'adaptiveNremove', opts.adaptiveNremove, ...
+        'fixedNremove',    opts.fixedNremove, ...
+        'chunkLength',     opts.chunkLength, ...
+        'minfreq',         opts.minfreq, ...
+        'maxfreq',         opts.maxfreq, ...
+        'plotResults',     opts.plotResults);
+    if opts.plotResults
+        nm = strrep(get(gcf, 'Name'), ' ', '_');
+        print(gcf, fullfile(figDir, [fileID '_zapline_' nm]), '-dpng', '-r150');
+        close(gcf);
+    end
 
     %%% Optional second Zapline pass
     if opts.zapline2
         D = tic; fprintf('\nZapline plus (pass 2) ...\n')
         [EEG.data, ~, ~] = clean_data_with_zapline_plus( ...
             double(EEG.data), EEG.srate, ...
-            'noisefreqs', 50, ...
-            'plotResults', 0);
-             % 'noisefreqs', 'line', ...        
-             % 'maxfreq', floor(EEG.srate/2) - 5, ...
+            'noisefreqs',      opts.noisefreqs, ...
+            'adaptiveNremove', opts.adaptiveNremove, ...
+            'fixedNremove',    opts.fixedNremove, ...
+            'chunkLength',     opts.chunkLength, ...
+            'minfreq',         opts.minfreq, ...
+            'maxfreq',         opts.maxfreq, ...
+            'plotResults',     opts.plotResults);
         KeepTime.Zapline2 = toc(D);
         fprintf('ZapLine-plus pass 2: %.2f min\n', KeepTime.Zapline2 / 60);
+    end
+    if opts.plotResults
+        nm = strrep(get(gcf, 'Name'), ' ', '_');
+        print(gcf, fullfile(figDir, [fileID '_zapline2_' nm]), '-dpng', '-r150');
+        close(gcf);
     end
 
     %%% Save BrainVision output
