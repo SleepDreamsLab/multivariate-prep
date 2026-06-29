@@ -125,7 +125,7 @@ for ifile = 1:numel(filesEEG)
     if opts.plotResults
         nm = strrep(get(gcf, 'Name'), ' ', '_');
         print(gcf, fullfile(figDir, [fileID '_zapline_' nm]), '-dpng', '-r150');
-        close(gcf);
+        pause(3); close(gcf);
     end
 
     %%% Optional second Zapline pass
@@ -143,10 +143,10 @@ for ifile = 1:numel(filesEEG)
         KeepTime.Zapline2 = toc(D);
         fprintf('ZapLine-plus pass 2: %.2f min\n', KeepTime.Zapline2 / 60);
     end
-    if opts.plotResults
+    if opts.plotResults & opts.zapline2
         nm = strrep(get(gcf, 'Name'), ' ', '_');
         print(gcf, fullfile(figDir, [fileID '_zapline2_' nm]), '-dpng', '-r150');
-        close(gcf);
+        pause(3); close(gcf);
     end
 
     %%% Save BrainVision output
