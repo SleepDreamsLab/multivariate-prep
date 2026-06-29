@@ -14,7 +14,7 @@ function failures = eval_filt_bids(BIDS, opts)
 %   Input paths
 %   -----------
 %   filteredpath      Root of the filtered derivatives.
-%                     Default: <BIDS root>/derivatives/preprocessing
+%                     Default: <BIDS root>/derivatives/prep-ged
 %   filtdesc          desc label for the filtered filename. Default: 'filt'
 %   scoringpath       Directory containing sleep-scoring files.
 %                     Default: <BIDS root>/derivatives/scoring/scores/Manual_Checked
@@ -23,7 +23,7 @@ function failures = eval_filt_bids(BIDS, opts)
 %   Output paths
 %   ------------
 %   figpath           Root for evaluation figures.
-%                     Default: <BIDS root>/derivatives/preprocessing/figures
+%                     Default: <BIDS root>/derivatives/prep-ged/figures
 %   refresh           Force re-run even if cached files exist. Default: false.
 %
 %   EEG
@@ -44,14 +44,17 @@ function failures = eval_filt_bids(BIDS, opts)
 arguments
     BIDS
 
+    %--- Derivative folder ---
+    opts.derivfolder      char = 'prep-ged'
+
     %--- Input paths ---
-    opts.filteredpath     char = fullfile(BIDS.pth, 'derivatives', 'preprocessing')
+    opts.filteredpath     char = ''
     opts.filtdesc         char = 'filt'
     opts.scoringpath      char = []
     opts.sfppath          char = BIDS.pth
 
     %--- Output paths ---
-    opts.figpath          char = fullfile(BIDS.pth, 'derivatives', 'preprocessing', 'figures')
+    opts.figpath          char = ''
     opts.refresh (1,1)    logical = false
 
     %--- EEG ---
@@ -66,6 +69,9 @@ arguments
     %--- Epoch ---
     opts.epochlength (1,1) double = 30
 end
+
+if isempty(opts.filteredpath), opts.filteredpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
+if isempty(opts.figpath),      opts.figpath      = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
 
 %%% Query raw EEG files from BIDS
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...

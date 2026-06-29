@@ -12,7 +12,7 @@ function failures = run_gedai_bids(BIDS, opts)
 %   -----------
 %   filteredpath      Root of the filtered derivatives, organised as
 %                     <sub>/<ses>/<fileID>_desc-<filtdesc>_eeg.dat.
-%                     Default: <BIDS root>/derivatives/preprocessing/A_filtered
+%                     Default: <BIDS root>/derivatives/prep-ged/A_filtered
 %   filtdesc          desc label used when building the filtered filename.
 %                     Default: 'filt'
 %   scoringpath       Directory containing sleep-scoring files (.json or .csv).
@@ -25,9 +25,9 @@ function failures = run_gedai_bids(BIDS, opts)
 %   Output paths
 %   ------------
 %   savepath          Root for GEDAI outputs.
-%                     Default: <BIDS root>/derivatives/preprocessing/GEDAI
+%                     Default: <BIDS root>/derivatives/prep-ged/GEDAI
 %   figpath           Root for all figures.
-%                     Default: <BIDS root>/derivatives/preprocessing/figures
+%                     Default: <BIDS root>/derivatives/prep-ged/figures
 %   geddesc           desc label for GEDAI BrainVision output files.
 %                     Default: 'filtGEDAI'
 %   refresh           Force re-run even if a cache file exists. Default: false.
@@ -56,16 +56,19 @@ function failures = run_gedai_bids(BIDS, opts)
 arguments
     BIDS
 
+    %--- Derivative folder ---
+    opts.derivfolder      char = 'prep-ged'
+
     %--- Input paths ---
-    opts.inputpath     char = fullfile(BIDS.pth, 'derivatives', 'preprocessing')
+    opts.inputpath        char = ''
     opts.inputdesc        char = 'filt'
     opts.scoringpath      char = fullfile(BIDS.pth, 'derivatives', 'scoring', 'scores', 'Manual_Checked')
     opts.sfppath          char = BIDS.pth
     opts.leadfielddir     char = fullfile(BIDS.pth, '..', 'Data_Analysis', 'Brainstorm_db', 'Leadfield_PM', 'data')
 
     %--- Output paths ---
-    opts.savepath         char = fullfile(BIDS.pth, 'derivatives', 'preprocessing')
-    opts.figpath          char = fullfile(BIDS.pth, 'derivatives', 'preprocessing', 'figures')
+    opts.savepath         char = ''
+    opts.figpath          char = ''
     opts.geddesc          char = 'filt2ged'
     opts.refresh (1,1) logical = false
 
@@ -86,8 +89,12 @@ arguments
     opts.prefix            char   = ''
 end
 
+if isempty(opts.inputpath), opts.inputpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
+if isempty(opts.savepath),  opts.savepath  = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
+if isempty(opts.figpath),   opts.figpath   = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
+
 KeepTime = struct();
-if isempty(opts.runs), opts.runs = gedai.defaultRuns(); 
+if isempty(opts.runs), opts.runs = gedai.defaultRuns();
 end
 
 %%% Query EEG files from BIDS (used for entity extraction and subject iteration)

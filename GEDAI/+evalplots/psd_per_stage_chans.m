@@ -1,8 +1,6 @@
-function psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, ChanIdx, opts)
-% GEDAI.EVAL.PSD_PER_STAGE  Clean vs. raw mean PSD plotted per sleep stage.
-%
-%   gedai.eval.psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, ChanIdx)
-%   gedai.eval.psd_per_stage(..., Name, Value)
+function psd_per_stage_chans(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, opts)
+% GEDAI.EVALPLOTS.PSD_PER_STAGE_CHANS  Per-stage PSD: per-channel epoch-means (transparent)
+%   overlaid with grand mean across all channels (thick line), raw vs. clean.
 %
 %   Inputs
 %   ------
@@ -11,7 +9,6 @@ function psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, Cha
 %   FreqsClean   : frequency vector for PwrClean (Hz).
 %   FreqsRaw     : frequency vector for PwrRaw (Hz).
 %   StageScoring : per-epoch sleep-stage codes.
-%   ChanIdx      : channel index (within PwrClean/PwrRaw) used for the PSD line.
 %
 %   Optional name-value pairs
 %   -------------------------
@@ -25,10 +22,9 @@ arguments
     FreqsClean   {mustBeVector}
     FreqsRaw     {mustBeVector}
     StageScoring {mustBeVector}
-    ChanIdx      (1,1) double = 1
     opts.FreqLim   (1,2) double = [0 40]
-    opts.FreqScale           = 'both'
-    opts.SavePath            = ''
+    opts.FreqScale             = 'both'
+    opts.SavePath              = ''
 end
 
 uniqueStages = unique(StageScoring);
@@ -41,7 +37,7 @@ nScales = numel(scaleList);
 
 fig = figure('Color', 'w', 'Units', 'centimeters', ...
     'Position', [2 2 50 8*nScales], ...
-    'Name', 'GEDAI evaluation — power per sleep stage');
+    'Name', 'GEDAI evaluation — channel PSD per sleep stage');
 tiledlayout(nScales, nStages, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 for iScale = 1:nScales
@@ -52,22 +48,26 @@ for iScale = 1:nScales
         nexttile; hold on;
         if ~any(mask), continue; end
 
-        meanClean = squeeze(mean(log10(PwrClean(ChanIdx, mask, fMaskClean)), 2));
-        meanRaw   = squeeze(mean(log10(PwrRaw(ChanIdx,   mask, fMaskRaw)),   2));
+        % Per-channel epoch-averages: [nChans x nFreqSel]
+        chanMeansRaw   = squeeze(mean(log10(PwrRaw(:,   mask, fMaskRaw)   + eps), 2));
+        chanMeansClean = squeeze(mean(log10(PwrClean(:, mask, fMaskClean) + eps), 2));
+        if isvector(chanMeansRaw),   chanMeansRaw   = chanMeansRaw(:)';   end
+        if isvector(chanMeansClean), chanMeansClean = chanMeansClean(:)'; end
 
-        % Individual epoch lines — plotted first so means sit on top
-        epochsRaw   = squeeze(log10(PwrRaw(ChanIdx,   mask, fMaskRaw)));
-        epochsClean = squeeze(log10(PwrClean(ChanIdx, mask, fMaskClean)));
-        if isvector(epochsRaw),   epochsRaw   = epochsRaw(:)';   end
-        if isvector(epochsClean), epochsClean = epochsClean(:)'; end
-        plot(FreqsRaw(fMaskRaw),     epochsRaw',   '-', 'Color', [0.75 0.75 0.75 0.3], ...
-            'LineWidth', 0.4, 'HandleVisibility', 'off');
-        plot(FreqsClean(fMaskClean), epochsClean', '-', 'Color', [stage_color(d), 0.3], ...
-            'LineWidth', 0.4, 'HandleVisibility', 'off');
+        % Grand mean across channels: [1 x nFreqSel]
+        grandMeanRaw   = mean(chanMeansRaw,   1);
+        grandMeanClean = mean(chanMeansClean, 1);
 
-        plot(FreqsRaw(fMaskRaw),     meanRaw,   '-', 'Color', [0.45 0.45 0.45], ...
+        % Per-channel lines (transparent)
+        plot(FreqsRaw(fMaskRaw),     chanMeansRaw',   '-', 'Color', [0.75 0.75 0.75 0.25], ...
+            'LineWidth', 0.5, 'HandleVisibility', 'off');
+        plot(FreqsClean(fMaskClean), chanMeansClean', '-', 'Color', [stage_color(d), 0.25], ...
+            'LineWidth', 0.5, 'HandleVisibility', 'off');
+
+        % Grand mean (thick)
+        plot(FreqsRaw(fMaskRaw),     grandMeanRaw,   '-', 'Color', [0.45 0.45 0.45], ...
             'LineWidth', 1.6, 'DisplayName', 'before GEDAI');
-        plot(FreqsClean(fMaskClean), meanClean, '-',  'Color', 'k', ...
+        plot(FreqsClean(fMaskClean), grandMeanClean, '-', 'Color', 'k', ...
             'LineWidth', 2.0, 'DisplayName', 'after GEDAI');
 
         if iStage == 1
@@ -86,5 +86,5 @@ for iScale = 1:nScales
     end
 end
 
-save_fig(fig, opts.SavePath, 'psd_per_stage');
+save_fig(fig, opts.SavePath, 'psd_per_stage_chans');
 end

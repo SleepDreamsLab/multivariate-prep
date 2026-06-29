@@ -1,7 +1,7 @@
 function failures = run_filter_bids(BIDS, opts)
 % RUN_FILTER_BIDS  Preprocess BIDS EEG files: import, resample, DC removal, Zapline.
 %   Results are saved as BrainVision files under
-%   <BIDS root>/derivatives/preprocessing/<sub>/<ses>/.
+%   <BIDS root>/derivatives/prep-ged/<sub>/<ses>/.
 %
 % USAGE:
 %   run_filter_bids(BIDS)
@@ -12,7 +12,7 @@ function failures = run_filter_bids(BIDS, opts)
 %
 % OPTIONAL NAME-VALUE:
 %   savepath        output root directory
-%                   (default <BIDS root>/derivatives/preprocessing)
+%                   (default <BIDS root>/derivatives/prep-ged)
 %   refresh         force reprocessing even if output file exists (default false)
 %   desc            BIDS desc entity for output filename         (default 'filt')
 %   tasklabel       BIDS task label(s) to query                 (default {'Sleep','sleep'})
@@ -29,15 +29,16 @@ arguments
     BIDS
 
     %--- Paths ---
-    opts.savepath         char    = fullfile(BIDS.pth, 'derivatives', 'preprocessing')
-    opts.figpath          char    = fullfile(BIDS.pth, 'derivatives', 'preprocessing', 'figures')
+    opts.derivfolder      char    = 'prep-ged'
+    opts.savepath         char    = ''
+    opts.figpath          char    = ''
     opts.refresh (1,1)    logical = false
     opts.desc             char    = 'filt'
 
     %--- EEG ---
     opts.tasklabel                       = {'Sleep', 'sleep'}
-    opts.acqlabel   char                 = '125Hz'
-    opts.noteegchannels   (1,:) double   = 257:264
+    opts.acqlabel   char                 = ''
+    opts.noteegchannels   (1,:) double   = 257:299
     opts.targetsrate      (1,1) double   = 0
     opts.removeDC         (1,1) logical  = true
     opts.zapline          (1,1) logical  = true
@@ -54,6 +55,9 @@ arguments
     %--- Subject filter ---
     opts.subjectfilter    cell            = {}
 end
+
+if isempty(opts.savepath), opts.savepath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
+if isempty(opts.figpath),  opts.figpath  = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
 
 %%% Query EEG files
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...

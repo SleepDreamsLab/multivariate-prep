@@ -116,6 +116,9 @@ end
 evalplots.psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
     'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
 
+evalplots.psd_per_stage_chans(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
+    'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
+
 evalplots.psd_overview(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
     'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
 
