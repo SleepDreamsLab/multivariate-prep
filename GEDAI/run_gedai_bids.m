@@ -62,6 +62,7 @@ arguments
     %--- Input paths ---
     opts.inputpath        char = ''
     opts.inputdesc        char = 'filt'
+    opts.inputfileext     char = '.vhdr'    
     opts.scoringpath      char = fullfile(BIDS.pth, 'derivatives', 'scoring', 'scores', 'Manual_Checked')
     opts.sfppath          char = BIDS.pth
     opts.leadfielddir     char = fullfile(BIDS.pth, '..', 'Data_Analysis', 'Brainstorm_db', 'Leadfield_PM', 'data')
@@ -71,6 +72,7 @@ arguments
     opts.figpath          char = ''
     opts.geddesc          char = 'filt2ged'
     opts.refresh (1,1) logical = false
+    opts.savefileext      char = '.set'
 
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
@@ -125,7 +127,7 @@ for ifile = 1:numel(filesEEG)
     try
 
     %%% Resolve filtered input file
-    filtFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.inputdesc '_eeg.vhdr']);
+    filtFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.inputdesc '_eeg' opts.inputfileext]);
     if ~isfile(filtFile)
         fprintf('[skip] %s: filtered file not found (%s)\n', fileID, filtFile)
         continue
@@ -240,7 +242,7 @@ for ifile = 1:numel(filesEEG)
         %%% Paths for this run
         gedaiRunDir  = fullfile(opts.savepath, subDir);
         gedaiFigDir  = fullfile(opts.figpath, ['desc-' opts.geddesc], fileID);
-        gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' opts.geddesc '_eeg.vhdr']);
+        gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' opts.geddesc '_eeg' opts.savefileext]);
 
 
 

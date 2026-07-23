@@ -15,6 +15,7 @@ function varargout = smartcache(func, filename, refresh, variablenames, varargin
         fileID = [fileID ext];
     end
     isBrainvision = strcmpi(ext, '.vhdr');
+    isEeglabset   = strcmpi(ext, '.set');
 
 %     %%% Truncate filename if full path exceeds Windows MAX_PATH (260 chars)
 %     MAX_PATH = 260;
@@ -47,6 +48,8 @@ function varargout = smartcache(func, filename, refresh, variablenames, varargin
         try
             if isBrainvision
                 varargout = {eeg_import(filename)};
+            elseif isEeglabset
+                varargout = {pop_loadset('filename', fileID, 'filepath', filepath)};
             else
                 S = load(filename);
                 S = orderfields(S, saveNames);
@@ -88,6 +91,8 @@ function varargout = smartcache(func, filename, refresh, variablenames, varargin
     end
     if isBrainvision
         pop_writebva(varargout{1}, filename, 'DataOrientation', 'MULTIPLEXED');
+    elseif isEeglabset
+        pop_saveset(varargout{1}, 'filename', fileID, 'filepath', filepath);
     elseif whos('out').bytes > 2e9
         save(filename, '-fromstruct', out, '-v7.3')
     else
