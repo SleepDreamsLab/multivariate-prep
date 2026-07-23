@@ -13,7 +13,8 @@ end
 % -------------------------------------------------------------------------
 function sfp = sfpFromPM(bidsPath, subjectName, sessName)
 % PM: Data_collection is assumed to be a sibling of the BIDS folder. [VERIFY]
-    collRoot = fullfile(fileparts(bidsPath), 'Data_collection');
+%     collRoot = fullfile(fileparts(bidsPath), 'Data_collection');
+    collRoot = fullfile(bidsPath, 'sourcedata');
     lab = erase(subjectName, 'sub-');
     num = regexp(lab, '\d+$', 'match', 'once');
     if isempty(num), sfp = ''; return; end

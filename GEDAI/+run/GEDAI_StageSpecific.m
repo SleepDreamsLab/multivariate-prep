@@ -68,6 +68,7 @@ if EEG.trials == 1
     % overlapping epochs, creating a mismatch with Scoring.
     if ~isempty(EEG.event)
         EEG.event(strcmpi({EEG.event.type}, 'boundary')) = [];
+        EEG.event(contains({EEG.event.type}, 'Epoch')) = [];
         EEG = eeg_checkset(EEG);
     end
     EEG = eeg_regepochs(EEG, 'recurrence', opts.EpochLength, ...

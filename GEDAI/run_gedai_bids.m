@@ -167,12 +167,14 @@ for ifile = 1:numel(filesEEG)
         chanlocs     = readlocs(sfpFile);
         chanlocs_reg = register_fiducials(chanlocs);
         EEG.chanlocs = chanlocs_reg(1:EEG.nbchan);
+        EEG.urchanlocs = EEG.chanlocs;    
     elseif strcmp(BIDS.description.Name, {'ercp'})
         chanfile = fullfile(fileparts(rawFile), [fileID, '_channels.tsv']);
         elecfile = fullfile(fileparts(rawFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
         [EEG, channelData, elecData] = bids_importchanlocs(EEG, chanfile, elecfile);
     else
         continue
+        EEG.urchanlocs = EEG.chanlocs;            
     end
 
     %%% Average re-reference
@@ -202,7 +204,6 @@ for ifile = 1:numel(filesEEG)
     lfCOV = gedai.loadrefcov(opts.leadfielddir, p, EEG.nbchan, removed_channels);
 
     %%% Remove bad channels
-    EEG.urchanlocs = EEG.chanlocs;
     EEG = pop_select(EEG, 'nochannel', find(removed_channels));
 
     %%% Epochs to plot
@@ -239,7 +240,7 @@ for ifile = 1:numel(filesEEG)
         %%% Paths for this run
         gedaiRunDir  = fullfile(opts.savepath, subDir);
         gedaiFigDir  = fullfile(opts.figpath, ['desc-' opts.geddesc], fileID);
-        gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' opts.geddesc '_eeg.dat']);
+        gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' opts.geddesc '_eeg.vhdr']);
 
 
 

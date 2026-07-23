@@ -98,6 +98,14 @@ for ifile = 1:numel(filesEEG)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
+
+    %%% Skip if already processed
+    pngFile = fullfile(opts.figpath, ['desc-' opts.filtdesc], subDir, [fileID '_psd_per_stage.png']);
+    if ~opts.refresh && isfile(pngFile)
+        fprintf('[skip] output exists: %s\n', pngFile)
+        continue
+    end
+
     try
 
     %%% Resolve filtered file
@@ -130,7 +138,7 @@ for ifile = 1:numel(filesEEG)
     
 
     %%% Load SFP
-    if strcmp(BIDS.description.Name, {'ercp'})
+    if strcmpi(BIDS.description.Name, {'ercp'})
         chanfile = fullfile(fileparts(rawFile), [fileID, '_channels.tsv']);
         elecfile = fullfile(fileparts(rawFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
         [EEGraw, channelData, elecData] = bids_importchanlocs(EEGraw, chanfile, elecfile);

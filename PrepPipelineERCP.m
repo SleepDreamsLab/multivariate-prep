@@ -19,7 +19,7 @@ removeDC = false;
 derivfolder = 'prep-ged';
 scoringpath = '';
 leadfieldpath = '';
-BIDS.description = []; BIDS.description.Name = 'ERCP';
+BIDS.description = []; BIDS.description.Name = 'ercp';
 
 % ---------------
 % Run per subject

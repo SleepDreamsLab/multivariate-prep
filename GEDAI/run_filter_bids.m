@@ -124,7 +124,7 @@ for ifile = 1:numel(filesEEG)
         'plotResults',     opts.plotResults);
     if opts.plotResults
         nm = strrep(get(gcf, 'Name'), ' ', '_');
-        print(gcf, fullfile(figDir, [fileID '_zapline_' nm]), '-dpng', '-r150');
+        print(gcf, fullfile(figDir, [fileID '_zapline_' nm '.png']), '-dpng', '-r150');
         pause(3); close(gcf);
     end
 
@@ -145,7 +145,7 @@ for ifile = 1:numel(filesEEG)
     end
     if opts.plotResults & opts.zapline2
         nm = strrep(get(gcf, 'Name'), ' ', '_');
-        print(gcf, fullfile(figDir, [fileID '_zapline2_' nm]), '-dpng', '-r150');
+        print(gcf, fullfile(figDir, [fileID '_zapline2_' nm '.png']), '-dpng', '-r150');
         pause(3); close(gcf);
     end
 
