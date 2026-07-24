@@ -12,7 +12,9 @@ function [EEGclean, EEGstage, epochIdx, KeepTime] = GEDAI_PerStage(EEG, Scoring,
 %   Name-value options
 %   ------------------
 %   EpochLength        : Epoch length in seconds (default 30).
-%   GEDAIMode          : Threshold mode string (default 'auto-').
+%   GEDAIMode          : Cell array of mode strings, one per SleepStages group.
+%                        If shorter than nGroups, the last entry is recycled.
+%                        Default: {'auto-'}.
 %   GEDAIEpochSize     : Epoch size in cycles (default 12).
 %   GEDAILowCutOffFreq : Low-cut frequency Hz (default 0.1).
 %   GEDAIMethod        : Reference string used when RefCOV is absent
@@ -40,7 +42,7 @@ arguments
     SleepStages             = {[0]}
     KeepTime                = []
     opts.EpochLength (1,1)  = 30
-    opts.GEDAIMode          = 'auto-'
+    opts.GEDAIMode          = {'auto-'}
     opts.GEDAIEpochSize     = 12
     opts.GEDAILowCutOffFreq = 0.1
     opts.GEDAIMethod        = 'interpolated'
@@ -127,13 +129,61 @@ for iGroup = 1:nGroups
         gedaiRefMatrix = opts.GEDAIMethod;          % string fallback
     end
 
+    % Resolve GEDAIMode for this group (recycle last entry if cell is shorter)
+    gedaiMode = opts.GEDAIMode{min(iGroup, numel(opts.GEDAIMode))};
+    fprintf('Running GEDAI with %s\n', gedaiMode)
+
+
+
+    % ── Worker count from available RAM. Peak per-worker allocation in
+    %    GEDAI_per_band is roughly the band's data copy plus working
+    %    copies; BYTES_PER_SAMPLE_CH bundles the double (8 B) with that
+    %    multiplier. Calibrated so that 567 ep x 244 ch needs >1/12 of a
+    %    2 TB machine's free RAM (observed OOM at 12 workers), while
+    %    498 ep x 231 ch does not.
+    BYTES_PER_SAMPLE_CH = 8 * 24;   % 8 B double x ~24 working copies
+    SAFETY              = 0.7#0;     % leave headroom for client + OS cache
+    MAX_WORKERS         = 12;
+
+    LOAD_NOW = EEGstageGroup.pnts * EEGstageGroup.nbchan;
+    perWorkerBytes = LOAD_NOW * BYTES_PER_SAMPLE_CH;
+
+    [~, sysMem] = memory;                       % Windows only
+    freeBytes   = sysMem.PhysicalMemory.Available;
+
+    nWorkers = floor(SAFETY * freeBytes / perWorkerBytes);
+    nWorkers = max(1, min(MAX_WORKERS, nWorkers));
+
+%     p = gcp('nocreate');
+%     if isempty(p) || p.NumWorkers ~= nWorkers
+%         delete(gcp('nocreate'));
+%         parpool('Processes', nWorkers);
+%     end
+    p = gcp('nocreate');
+    if isempty(p) || p.NumWorkers ~= nWorkers
+        delete(gcp('nocreate'));
+        c = parcluster('Processes');
+        oldNT = c.NumThreads;
+        c.NumThreads = 1;
+        parpool(c, nWorkers);
+        c.NumThreads = oldNT;   % restore profile
+    end
+
+    fprintf(['gedai.GEDAI_PerStage: load %.2e, %.1f GB/worker, ' ...
+             '%.1f GB free -> %d workers.\n'], ...
+        LOAD_NOW, perWorkerBytes/2^30, freeBytes/2^30, nWorkers);
+
+
+
+
+
     % Run GEDAI
     D = tic;
     fprintf('gedai.GEDAI_PerStage: running GEDAI for stage(s) [%s] ...\n', ...
         num2str(stages(:)', '%d '));
     [EEGcleanGroup, ~, SENSAI_score, SENSAI_score_per_band, ...
         artifact_threshold_per_band, mean_ENOVA, ENOVA_per_epoch] = ...
-        GEDAI(EEGstageGroup, opts.GEDAIMode, opts.GEDAIEpochSize, ...
+        GEDAI(EEGstageGroup, gedaiMode, opts.GEDAIEpochSize, ...
               opts.GEDAILowCutOffFreq, gedaiRefMatrix, true, 0, [], opts.GEDAIEnovaChannelThreshold, [], ...
               opts.MovAvgSize, opts.BBEpochSize, opts.BroadbandOnly, opts.PercentileThreshold, opts.BBMinThreshold, opts.ComputeSENSAI);
     gedaiTime = gedaiTime + toc(D);

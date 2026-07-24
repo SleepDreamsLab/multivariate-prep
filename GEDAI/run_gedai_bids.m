@@ -172,7 +172,9 @@ for ifile = 1:numel(filesEEG)
 
         % Urchanlocs
         EEG.urchanlocs = EEG.chanlocs;  
-        [EEG.chanlocs.urchan] = deal_idx(1:numel(EEG.chanlocs));
+        for iCh = 1:numel(EEG.chanlocs)
+            EEG.chanlocs(iCh).urchan = iCh;
+        end
 
     elseif strcmp(BIDS.description.Name, {'ercp'})
         chanfile = fullfile(fileparts(rawFile), [fileID, '_channels.tsv']);
@@ -181,8 +183,10 @@ for ifile = 1:numel(filesEEG)
 
         % Urchanlocs
         EEG.urchanlocs = EEG.chanlocs;  
-        [EEG.chanlocs.urchan] = deal_idx(1:numel(EEG.chanlocs));
-
+        for iCh = 1:numel(EEG.chanlocs)
+            EEG.chanlocs(iCh).urchan = iCh;
+        end
+        
     else
         % continue
     end
@@ -236,11 +240,15 @@ for ifile = 1:numel(filesEEG)
                 refCOV_perStage = {lfCOV};
         end
 
+        %%% Build per-stage GEDAIMode from stage-keyed dict (errors on inconsistent groups)
+        GEDAIMode_perStage = cellfun(@(s) resolveStageMode(s, r), stageLogic, 'uni', 0);
+
         %%% Drop stage groups absent from scoring
-        presentStages   = unique(scoringDigits_NoN1);
-        keep            = cellfun(@(s) any(ismember(s, presentStages)), stageLogic);
-        stageLogic      = stageLogic(keep);
-        refCOV_perStage = refCOV_perStage(keep);
+        presentStages      = unique(scoringDigits_NoN1);
+        keep               = cellfun(@(s) any(ismember(s, presentStages)), stageLogic);
+        stageLogic         = stageLogic(keep);
+        refCOV_perStage    = refCOV_perStage(keep);
+        GEDAIMode_perStage = GEDAIMode_perStage(keep);
 
         fprintf('Run %d/%d: %s\n', iRun, numel(opts.runs), savename)
 
@@ -259,7 +267,7 @@ for ifile = 1:numel(filesEEG)
             @() run.GEDAI_StageSpecific(EEG, scoringDigits_NoN1, ...
                 stageLogic, KeepTime, ...
                 'EpochLength',                opts.epochlength, ...
-                'GEDAIMode',                  r.GEDAIMode, ...
+                'GEDAIMode',                  GEDAIMode_perStage, ...
                 'GEDAIEpochSize',             r.GEDAIEpochSize, ...
                 'GEDAILowCutOffFreq',         r.GEDAILowCutOffFreq, ...
                 'BBEpochSize',                r.GEDAIBroadbandEpochSize, ...
@@ -277,9 +285,11 @@ for ifile = 1:numel(filesEEG)
         %%% JSON sidecar: GEDAI parameters + timing (only written on fresh runs)
         if isNewRun
             [~, bvBase] = fileparts(gedaiDatFile);
+            rJson = rmfield(r, 'GEDAIMode_dict');
+            rJson.GEDAIMode_resolved = GEDAIMode_perStage;
             sidecarjson(KeepTime, ...
                 fullfile(gedaiRunDir, [bvBase '.json']), ...
-                struct('GEDAIParameters', r));
+                struct('GEDAIParameters', rJson));
         end
 
         %%% Evaluation figures
@@ -310,7 +320,7 @@ for ifile = 1:numel(filesEEG)
 
     catch ME
         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
-        failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
+        failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport(), 'timestamp', datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')); %#ok<AGROW>
     end
 end
 
@@ -327,3 +337,25 @@ if ~isempty(failures)
 end
 
 end % run_gedai_bids
+
+% -------------------------------------------------------------------------
+function mode = resolveStageMode(stages, r)
+% Resolve GEDAIMode for a group of stage digits.
+% Errors if stages in the same group map to different modes.
+    modes = arrayfun(@(s) lookupMode(s, r), stages, 'uni', 0);
+    uniqueModes = unique(modes);
+    if numel(uniqueModes) > 1
+        error('run_gedai_bids:inconsistentGEDAIMode', ...
+            'Stages [%s] map to different GEDAIMode values (%s) - assign the same mode to all stages in a group.', ...
+            num2str(stages(:)', '%d '), strjoin(uniqueModes, ', '));
+    end
+    mode = uniqueModes{1};
+end
+
+function mode = lookupMode(stage, r)
+    if isConfigured(r.GEDAIMode_dict) && isKey(r.GEDAIMode_dict, stage)
+        mode = char(r.GEDAIMode_dict(stage));
+    else
+        mode = r.GEDAIMode;
+    end
+end
