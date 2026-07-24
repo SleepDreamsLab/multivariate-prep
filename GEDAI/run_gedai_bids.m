@@ -169,14 +169,22 @@ for ifile = 1:numel(filesEEG)
         chanlocs     = readlocs(sfpFile);
         chanlocs_reg = register_fiducials(chanlocs);
         EEG.chanlocs = chanlocs_reg(1:EEG.nbchan);
-        EEG.urchanlocs = EEG.chanlocs;    
+
+        % Urchanlocs
+        EEG.urchanlocs = EEG.chanlocs;  
+        [EEG.chanlocs.urchan] = deal_idx(1:numel(EEG.chanlocs));
+
     elseif strcmp(BIDS.description.Name, {'ercp'})
         chanfile = fullfile(fileparts(rawFile), [fileID, '_channels.tsv']);
         elecfile = fullfile(fileparts(rawFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
         [EEG, channelData, elecData] = bids_importchanlocs(EEG, chanfile, elecfile);
+
+        % Urchanlocs
+        EEG.urchanlocs = EEG.chanlocs;  
+        [EEG.chanlocs.urchan] = deal_idx(1:numel(EEG.chanlocs));
+
     else
-        continue
-        EEG.urchanlocs = EEG.chanlocs;            
+        % continue
     end
 
     %%% Average re-reference
