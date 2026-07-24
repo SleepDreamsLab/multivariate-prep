@@ -185,9 +185,6 @@ for ifile = 1:numel(filesEEG)
     %%% Replace isolated N1 epochs at stage boundaries
     scoringDigits_NoN1 = gedai.killN1(scoringDigits);
 
-    %%% Assign 10-20 labels
-    EEG = chans1020(EEG, false, 'net', opts.net);
-
     %%% Bad channel detection
     D = tic;
     [removed_channels, corr, znoise] = smartcache( ...
@@ -282,7 +279,8 @@ for ifile = 1:numel(filesEEG)
         run.eval_clean(EEG, EEGgedai, scoringDigits_NoN1, ...
             'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
             'EpochsToPlot', epochsToPlot, 'refresh', opts.refresh, ...
-            'SavePath', fullfile(gedaiFigDir, fileID));
+            'net', opts.net, 'SavePath', fullfile(gedaiFigDir, fileID));
+        pause(1)
         close all;       
         
 %         %%% Write savename marker

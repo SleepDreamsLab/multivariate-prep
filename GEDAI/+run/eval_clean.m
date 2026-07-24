@@ -62,9 +62,8 @@ EEGclean    = pop_interp(EEGclean, EEGraw.urchanlocs, 'spherical');
 toc
 
 %%% --- Rename 10-20 channels ---
-EEGclean    = chans1020(EEGclean, 0, 'add_eog', 0, 'net', opts.net);
-EEGraw      = chans1020(EEGraw, 0, 'add_eog', 0, 'net', opts.net);
-
+EEGclean    = chans1020(EEGclean, false, 'add_eog', 0, 'net', opts.net);
+EEGraw      = chans1020(EEGraw, false, 'add_eog', 0, 'net', opts.net);
 
 %%% --- Compute Welch power spectra ---
 fprintf('gedai.eval_clean: computing Welch power (clean) ...\n');
