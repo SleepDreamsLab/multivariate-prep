@@ -43,6 +43,7 @@ arguments
     KeepTime                = []
     opts.EpochLength (1,1)  = 30
     opts.GEDAIMode          = {'auto-'}
+    opts.GEDAIModeBB        = {'auto-'}
     opts.GEDAIEpochSize     = 12
     opts.GEDAILowCutOffFreq = 0.1
     opts.GEDAIMethod        = 'interpolated'
@@ -129,9 +130,10 @@ for iGroup = 1:nGroups
         gedaiRefMatrix = opts.GEDAIMethod;          % string fallback
     end
 
-    % Resolve GEDAIMode for this group (recycle last entry if cell is shorter)
-    gedaiMode = opts.GEDAIMode{min(iGroup, numel(opts.GEDAIMode))};
-    fprintf('Running GEDAI with %s\n', gedaiMode)
+    % Resolve GEDAIMode / GEDAIModeBB for this group (recycle last entry if cell is shorter)
+    gedaiMode   = opts.GEDAIMode{min(iGroup,   numel(opts.GEDAIMode))};
+    gedaiModeBB = opts.GEDAIModeBB{min(iGroup, numel(opts.GEDAIModeBB))};
+    fprintf('Running GEDAI with mode=%s, modeBB=%s\n', gedaiMode, gedaiModeBB)
 
 
 
@@ -142,7 +144,7 @@ for iGroup = 1:nGroups
     %    2 TB machine's free RAM (observed OOM at 12 workers), while
     %    498 ep x 231 ch does not.
     BYTES_PER_SAMPLE_CH = 8 * 24;   % 8 B double x ~24 working copies
-    SAFETY              = 0.7#0;     % leave headroom for client + OS cache
+    SAFETY              = 0.70;      % leave headroom for client + OS cache
     MAX_WORKERS         = 12;
 
     LOAD_NOW = EEGstageGroup.pnts * EEGstageGroup.nbchan;
@@ -183,7 +185,7 @@ for iGroup = 1:nGroups
         num2str(stages(:)', '%d '));
     [EEGcleanGroup, ~, SENSAI_score, SENSAI_score_per_band, ...
         artifact_threshold_per_band, mean_ENOVA, ENOVA_per_epoch] = ...
-        GEDAI(EEGstageGroup, gedaiMode, opts.GEDAIEpochSize, ...
+        GEDAI(EEGstageGroup, gedaiMode, gedaiModeBB, opts.GEDAIEpochSize, ...
               opts.GEDAILowCutOffFreq, gedaiRefMatrix, true, 0, [], opts.GEDAIEnovaChannelThreshold, [], ...
               opts.MovAvgSize, opts.BBEpochSize, opts.BroadbandOnly, opts.PercentileThreshold, opts.BBMinThreshold, opts.ComputeSENSAI);
     gedaiTime = gedaiTime + toc(D);

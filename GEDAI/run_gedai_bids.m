@@ -124,7 +124,7 @@ for ifile = 1:numel(filesEEG)
     fprintf('\n=== %s ===\n', fileID)
     
     %%% Try block
-    try
+%     try
 
     %%% Resolve filtered input file
     filtFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.inputdesc '_eeg' opts.inputfileext]);
@@ -240,15 +240,17 @@ for ifile = 1:numel(filesEEG)
                 refCOV_perStage = {lfCOV};
         end
 
-        %%% Build per-stage GEDAIMode from stage-keyed dict (errors on inconsistent groups)
-        GEDAIMode_perStage = cellfun(@(s) resolveStageMode(s, r), stageLogic, 'uni', 0);
+        %%% Build per-stage GEDAIMode / GEDAIModeBB from stage-keyed dicts
+        GEDAIMode_perStage   = cellfun(@(s) resolveStageMode(s, r.GEDAIMode_dict,   r.GEDAIMode),   stageLogic, 'uni', 0);
+        GEDAIModeBB_perStage = cellfun(@(s) resolveStageMode(s, r.GEDAIModeBB_dict, r.GEDAIModeBB), stageLogic, 'uni', 0);
 
         %%% Drop stage groups absent from scoring
         presentStages      = unique(scoringDigits_NoN1);
         keep               = cellfun(@(s) any(ismember(s, presentStages)), stageLogic);
-        stageLogic         = stageLogic(keep);
-        refCOV_perStage    = refCOV_perStage(keep);
-        GEDAIMode_perStage = GEDAIMode_perStage(keep);
+        stageLogic           = stageLogic(keep);
+        refCOV_perStage      = refCOV_perStage(keep);
+        GEDAIMode_perStage   = GEDAIMode_perStage(keep);
+        GEDAIModeBB_perStage = GEDAIModeBB_perStage(keep);
 
         fprintf('Run %d/%d: %s\n', iRun, numel(opts.runs), savename)
 
@@ -268,6 +270,7 @@ for ifile = 1:numel(filesEEG)
                 stageLogic, KeepTime, ...
                 'EpochLength',                opts.epochlength, ...
                 'GEDAIMode',                  GEDAIMode_perStage, ...
+                'GEDAIModeBB',                GEDAIModeBB_perStage, ...
                 'GEDAIEpochSize',             r.GEDAIEpochSize, ...
                 'GEDAILowCutOffFreq',         r.GEDAILowCutOffFreq, ...
                 'BBEpochSize',                r.GEDAIBroadbandEpochSize, ...
@@ -285,8 +288,9 @@ for ifile = 1:numel(filesEEG)
         %%% JSON sidecar: GEDAI parameters + timing (only written on fresh runs)
         if isNewRun
             [~, bvBase] = fileparts(gedaiDatFile);
-            rJson = rmfield(r, 'GEDAIMode_dict');
-            rJson.GEDAIMode_resolved = GEDAIMode_perStage;
+            rJson = rmfield(r, {'GEDAIMode_dict', 'GEDAIModeBB_dict'});
+            rJson.GEDAIMode_resolved   = GEDAIMode_perStage;
+            rJson.GEDAIModeBB_resolved = GEDAIModeBB_perStage;
             sidecarjson(KeepTime, ...
                 fullfile(gedaiRunDir, [bvBase '.json']), ...
                 struct('GEDAIParameters', rJson));
@@ -318,10 +322,10 @@ for ifile = 1:numel(filesEEG)
         end
     end
 
-    catch ME
-        fprintf('[ERROR] %s: %s\n', fileID, ME.message);
-        failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport(), 'timestamp', datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')); %#ok<AGROW>
-    end
+%     catch ME
+%         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
+%         failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport(), 'timestamp', datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')); %#ok<AGROW>
+%     end
 end
 
 %%% Failure summary
@@ -339,23 +343,23 @@ end
 end % run_gedai_bids
 
 % -------------------------------------------------------------------------
-function mode = resolveStageMode(stages, r)
-% Resolve GEDAIMode for a group of stage digits.
+function mode = resolveStageMode(stages, dict, fallback)
+% Resolve mode for a group of stage digits from a dictionary with scalar fallback.
 % Errors if stages in the same group map to different modes.
-    modes = arrayfun(@(s) lookupMode(s, r), stages, 'uni', 0);
+    modes = arrayfun(@(s) lookupMode(s, dict, fallback), stages, 'uni', 0);
     uniqueModes = unique(modes);
     if numel(uniqueModes) > 1
-        error('run_gedai_bids:inconsistentGEDAIMode', ...
-            'Stages [%s] map to different GEDAIMode values (%s) - assign the same mode to all stages in a group.', ...
+        error('run_gedai_bids:inconsistentMode', ...
+            'Stages [%s] map to different mode values (%s) - assign the same mode to all stages in a group.', ...
             num2str(stages(:)', '%d '), strjoin(uniqueModes, ', '));
     end
     mode = uniqueModes{1};
 end
 
-function mode = lookupMode(stage, r)
-    if isConfigured(r.GEDAIMode_dict) && isKey(r.GEDAIMode_dict, stage)
-        mode = char(r.GEDAIMode_dict(stage));
+function mode = lookupMode(stage, dict, fallback)
+    if isConfigured(dict) && isKey(dict, stage)
+        mode = char(dict(stage));
     else
-        mode = r.GEDAIMode;
+        mode = fallback;
     end
 end

@@ -16,6 +16,9 @@ addpath('..\eeg-oscillations') % https://github.com/SvennoNito/eeg-oscillations
 eeglabpath = '..\EEGLAB_2025.0.0'; % https://sccn.ucsd.edu/eeglab/download.php
 addpath(eeglabpath) 
 
+% Brainstorm
+addpath('..\brainstorm3')
+
 % EEGLAB requires extensions for importing BrainVision files.
 % Run `eeglab`, then install needed plugins via: File -> Manage EEGLAB extensions
 % Extensions: 

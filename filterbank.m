@@ -88,6 +88,22 @@ switch FilterType
         % stopAtten        = 30; 
         % EEG_HiPassFilt09 = designfilt('highpassfir','PassbandFrequency',passFrq,'StopbandFrequency',stopFrq,'StopbandAttenuation',stopAtten,'PassbandRipple',passRipple,'SampleRate',srateOrigFilt,'DesignMethod','kaiser');
         
+    case 'EEG_SWLoPassFilt_IIR'   
+
+        %%% Design IIR lowpass filter
+        % srateOrigFilt   =  srateOrig;
+        passFrq         = 4;
+        stopFrq         = 6;
+        passRipple      = 0.02;     
+        stopAtten       = 60; 
+        Filter          = designfilt('lowpassiir', ...
+            'PassbandFrequency',passFrq, ...
+            'StopbandFrequency',stopFrq, ...
+            'PassbandRipple',passRipple, ...
+            'StopbandAttenuation',stopAtten, ...
+            'SampleRate',FilterSrate,['' ...
+            'DesignMethod'],'cheby2');  
+
     case 'EOG_HiPassFilt_IIR'                
         
         % EOG
