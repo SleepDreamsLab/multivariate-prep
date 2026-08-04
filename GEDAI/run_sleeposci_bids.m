@@ -152,6 +152,27 @@ for ifile = 1:numel(filesEEG)
 
     %%% Import filtered EEG
     D = tic; fprintf('\nImporting filtered EEG ...\n')
-    EEG = eeg_import(filtFile);
+    fast_eeg_import(filtFile);
     KeepTime.EEGimport = toc(D);
+
+    %%% Downsample
+    EEG = pop_resample(EEG, 25);
+
+    %%% Low-pass filter
+    EEG_SWFilter = filterbank(EEG.srate, 'EEG_SWLoPassFilt_IIR');  
+    EEG.data = single(filtfilt(EEG_SWFilter, double(EEG.data'))');    
+
+    %%% Interpolote
+    EEG = pop_interp(EEG, EEG.urchanlocs, 'spherical');
+
+    %%% --- Rename 10-20 channels ---
+    EEG1020 = chans1020(EEG, true, 'add_eog', 0, 'net', opts.net);
+
+
+    %%% SW detection
+    addpath(fullfile('..', 'MySlowWaveDetection'))
+    SW = swdetect_fast(EEG1020.data, EEG1020.srate, 'NegZeroCrossing', find(ismember(scoringDigits, [-2, -3])), 30, 1:EEG1020.nbchan, 'Yes');
+    
+%     data = envelope(min(EEG.data2, [], 1)*-1)*-1;
+%     SW = swdetect_fast(data, EEG.srate, 'NegZeroCrossing', find(ismember(scoringDigits, [-1, -2, -3])), 30, 1, 'Yes');
 end
