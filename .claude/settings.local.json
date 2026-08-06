@@ -8,7 +8,13 @@
       "PowerShell(Get-ChildItem -Recurse \"C:\\\\Postdoc\\\\Code\" -Directory | Where-Object { $_.Name -match '^\\\\+organon$' } | Select-Object FullName)",
       "PowerShell(Head 5 *)",
       "PowerShell(New-Item *)",
-      "PowerShell(Rename-Item *)"
+      "PowerShell(Rename-Item *)",
+      "Bash(where matlab *)",
+      "Bash(\"C:\\\\Program Files\\\\MATLAB\\\\R2022b\\\\bin\\\\matlab.exe\" -batch \"try; checkcode\\('EEGCompareViewer.m'\\); catch e; disp\\(e.message\\); end\")",
+      "Bash(grep *)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "WebFetch(domain:eeglab.org)",
+      "Bash(./.venv/Scripts/python -c ' *)"
     ]
   }
 }
