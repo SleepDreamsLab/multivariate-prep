@@ -1,5 +1,6 @@
 r"""
-AMICA (pamica) on BIDS derivative EEGLAB .set files.
+AMICA (pamica) on BIDS derivative recordings, either EEGLAB .set or BrainVision
+.vhdr files.
 
 Per recording: import -> Chebyshev-II high-pass -> rank projection (GEDAI may
 have left the data rank deficient) -> AMICA -> unmixing matrices written in the
@@ -24,11 +25,15 @@ BIDS_MAT      = Path(__file__).parent / "BidsFiles" / "BIDS_DROP.mat"
 DERIV_IN_DIR  = "prep-ged"  # derivatives subfolder to read the desc-* .set files from
 DERIV_OUT_DIR = "pamica"    # derivatives subfolder to write AMICA output under
 DESC          = "zc2gedWakeBBAuto"
+DESC          = "zc"
 SUBJECTS      = ["drop0001"]  # None = all subjects
 SESSIONS      = ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
 
+
 MAX_ITER = 2000  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
+DO_REJECT = False  # Fortran-style outlier rejection; costs ~2x GPU memory (pamica clones the full array
+                   # every iteration under do_reject, core.py:1710) -- OOMs on this recording size/GPU
 PASS_FRQ, STOP_FRQ, PASS_RIPPLE, STOP_ATTEN = 1.6, 0.8, 0.05, 30
 
 
@@ -45,15 +50,23 @@ def load_bids(mat_path):
     return _unwrap(mat[next(k for k in mat if not k.startswith("__"))])
 
 
+DATA_EXTENSIONS = (".set", ".vhdr")  # preference order when both exist for a recording
+
+
 def deriv_paths(bids, desc, deriv_in):
-    """Map each raw .vhdr recording in the BIDS struct onto its prep-ged .set file.
+    """Map each raw .vhdr recording in the BIDS struct onto its prep-ged derivative file.
 
     Mirrors the MATLAB filtering (bids.query(..., 'extension', '.vhdr')) then
     bids.internal.parse_filename entity join, using the ext/entities fields
     that BIDS_DROP.mat already carries per recording instead of re-deriving
     them from the filename.
+
+    The derivative can be either an EEGLAB .set or a BrainVision .vhdr file;
+    both extensions are tried per recording (in DATA_EXTENSIONS order), and
+    run_amica() picks the matching MNE reader off the extension it gets back.
     """
     paths = []
+    missing = []
     for sub in np.atleast_1d(bids["subjects"]):
         for rec in np.atleast_1d(sub["eeg"]):
             if rec["ext"] != ".vhdr":
@@ -67,12 +80,19 @@ def deriv_paths(bids, desc, deriv_in):
                 continue
             file_id = "_".join(f"{k}-{v}" for k, v in ent.items())
             folders = [f"sub-{ent['sub']}"] + ([f"ses-{ent['ses']}"] if "ses" in ent else [])
-            paths.append(deriv_in.joinpath(*folders, f"{file_id}_desc-{desc}_eeg.set"))
+            base = deriv_in.joinpath(*folders, f"{file_id}_desc-{desc}_eeg")
+            candidates = [base.with_suffix(ext) for ext in DATA_EXTENSIONS]
+            found = [c for c in candidates if c.is_file()]
+            if not found:
+                missing.append(base)
+                continue
+            if len(found) > 1:
+                print(f"both {' and '.join(c.suffix for c in found)} present for {base.name}, using {found[0].suffix}")
+            paths.append(found[0])
 
-    missing = [p for p in paths if not p.is_file()]
-    for p in missing:
-        print(f"missing: {p}")
-    return [p for p in paths if p.is_file()]
+    for base in missing:
+        print(f"missing: {base} ({'/'.join(DATA_EXTENSIONS)})")
+    return paths
 
 
 def highpass(X, sfreq):
@@ -100,8 +120,17 @@ def rank_projection(X, tol=1e-7):
     return V[:, :k].T
 
 
-def run_amica(set_file, out_dir):
-    raw = mne.io.read_raw_eeglab(set_file, preload=True)
+def read_raw(data_file):
+    """Load a derivative recording with the MNE reader matching its extension."""
+    if data_file.suffix == ".set":
+        return mne.io.read_raw_eeglab(data_file, preload=True)
+    if data_file.suffix == ".vhdr":
+        return mne.io.read_raw_brainvision(data_file, preload=True)
+    raise ValueError(f"unsupported derivative extension: {data_file.suffix} ({data_file})")
+
+
+def run_amica(data_file, out_dir):
+    raw = read_raw(data_file)
     picks = mne.pick_types(raw.info, eeg=True, exclude="bads")
     if raw.info["bads"]:
         print(f"  {len(raw.info['bads'])} channel(s) flagged bad in the file, excluded: {raw.info['bads']}")
@@ -110,16 +139,16 @@ def run_amica(set_file, out_dir):
     X = raw.get_data(picks=picks) * 1e6  # MNE volts -> EEGLAB microvolts
     del raw
 
-    print(f"{set_file.stem}: {len(labels)} channels")
+    print(f"{data_file.stem}: {len(labels)} channels")
     X = highpass(X, sfreq)
     X -= X.mean(axis=1, keepdims=True)
     P = rank_projection(X)  # kept in float64: cheap, and wants a clean rank cut
     Xr = (P @ X).astype(np.float32)
     del X
 
-    model = AMICA(n_models=1, n_mix=3, device="cuda", dtype=torch.float32)
+    model = AMICA(n_models=1, n_mix=3, device="cuda")
     t0 = time.perf_counter()
-    model.fit(Xr, max_iter=MAX_ITER)
+    model.fit(Xr, max_iter=MAX_ITER, block_size=8192, dtype=torch.float32, do_reject=DO_REJECT)
     elapsed = time.perf_counter() - t0
     print(f"  AMICA fit took {elapsed / 60:.1f} min ({elapsed:.1f} s)")
 
@@ -128,7 +157,7 @@ def run_amica(set_file, out_dir):
     ref, chk = model.transform(Xr[:, :5000]), np.linalg.pinv(A) @ Xr[:, :5000]
     r = np.array([np.corrcoef(a, b)[0, 1] for a, b in zip(ref, chk)])
     if np.abs(r).min() < 0.999:
-        print(f"WARNING {set_file.stem}: mixing-matrix convention check failed ({np.abs(r).min():.3f})")
+        print(f"WARNING {data_file.stem}: mixing-matrix convention check failed ({np.abs(r).min():.3f})")
 
     A = A[:, model.variance_order()]  # EEGLAB order: IC1 = highest variance
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -140,7 +169,7 @@ def run_amica(set_file, out_dir):
             "icasphere": P,
             "icawinv": P.T @ A,
             "chanlabels": np.array(labels, dtype=object),
-            "setfile": str(set_file),
+            "setfile": str(data_file),
             "srate": sfreq,
             "final_ll": model.final_ll_,
         },
@@ -156,9 +185,9 @@ if __name__ == "__main__":
     deriv_in = rawdata / "derivatives" / DERIV_IN_DIR
     deriv_out = rawdata / "derivatives" / DERIV_OUT_DIR
 
-    for set_file in deriv_paths(bids, DESC, deriv_in):
-        out_dir = deriv_out / set_file.stem
+    for data_file in deriv_paths(bids, DESC, deriv_in):
+        out_dir = deriv_out / data_file.stem
         if (out_dir / "amica_eeglab.mat").is_file():
-            print(f"skip {set_file.stem} (already done)")
+            print(f"skip {data_file.stem} (already done)")
             continue
-        print(f"{set_file.stem}: final LL = {run_amica(set_file, out_dir):.5f}")
+        print(f"{data_file.stem}: final LL = {run_amica(data_file, out_dir):.5f}")
