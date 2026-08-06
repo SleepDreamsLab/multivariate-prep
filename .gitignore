@@ -1,5 +1,4 @@
 **/*.asv
-BidsFiles/
 dependancies.m
 .venv/
 __pycache__/
