@@ -16,6 +16,7 @@ from pathlib import Path
 import mne
 import numpy as np
 import scipy.io as sio
+import torch
 from pamica import AMICA
 from scipy.signal import cheb2ord, cheby2, sosfiltfilt
 
@@ -112,11 +113,11 @@ def run_amica(set_file, out_dir):
     print(f"{set_file.stem}: {len(labels)} channels")
     X = highpass(X, sfreq)
     X -= X.mean(axis=1, keepdims=True)
-    P = rank_projection(X)
-    Xr = P @ X
+    P = rank_projection(X)  # kept in float64: cheap, and wants a clean rank cut
+    Xr = (P @ X).astype(np.float32)
     del X
 
-    model = AMICA(n_models=1, n_mix=3, device="cuda")
+    model = AMICA(n_models=1, n_mix=3, device="cuda", dtype=torch.float32)
     t0 = time.perf_counter()
     model.fit(Xr, max_iter=MAX_ITER)
     elapsed = time.perf_counter() - t0
