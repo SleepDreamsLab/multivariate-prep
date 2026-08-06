@@ -9,21 +9,21 @@
       so it must live at ..\pAMICA relative to this repo).
     - Runs `uv sync` to create .venv and install mne/numpy/scipy/pamica exactly
       as pinned in uv.lock.
-    - Installs the CPU build of torch by default. Pass -Cuda on a machine that
-      has an NVIDIA GPU to install the CUDA 13.0 build instead (pyproject.toml's
-      pytorch-cu130 index) so pamica's AMICA fit actually runs on the GPU.
+    - Installs the CUDA build of torch by default (pyproject.toml's
+      pytorch-cu126 index) so pamica's AMICA fit runs on the GPU. Pass -Cpu on
+      a machine without an NVIDIA GPU to install the CPU build instead.
 
-.PARAMETER Cuda
-    Install the CUDA build of torch (`uv sync --extra cuda`) instead of the
-    CPU build. Only useful on a machine with an NVIDIA GPU and a driver new
-    enough for CUDA 13 (check `nvidia-smi`'s "CUDA Version" field).
+.PARAMETER Cpu
+    Install the CPU build of torch (`uv sync --extra cpu`) instead of the
+    CUDA build. Use this on a machine without an NVIDIA GPU, or whose driver
+    is too old for CUDA 12.6 (check `nvidia-smi`'s "CUDA Version" field).
 
 .NOTES
     Run from anywhere; paths are resolved relative to this script's location, not cwd.
 #>
 
 param(
-    [switch]$Cuda
+    [switch]$Cpu
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,20 +52,20 @@ if (-not (Test-Path (Join-Path $pamicaRoot "pyproject.toml"))) {
 }
 
 # 3. sync this repo's venv (.venv) from pyproject.toml / uv.lock
-if ($Cuda) {
+if ($Cpu) {
+    Write-Host "Syncing .venv for multivariate-prep (CPU build of torch)..."
+} else {
     if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
-        Write-Warning "nvidia-smi not found -- no NVIDIA driver detected on this machine. Continuing with -Cuda anyway, but torch.cuda.is_available() will likely come back False."
+        Write-Warning "nvidia-smi not found -- no NVIDIA driver detected on this machine. Continuing with the CUDA build anyway, but torch.cuda.is_available() will likely come back False. Pass -Cpu to install the CPU build instead."
     }
     Write-Host "Syncing .venv for multivariate-prep (CUDA build of torch)..."
-} else {
-    Write-Host "Syncing .venv for multivariate-prep (CPU build of torch)..."
 }
 Push-Location $repoRoot
 try {
-    if ($Cuda) {
-        uv sync --extra cuda
-    } else {
+    if ($Cpu) {
         uv sync --extra cpu
+    } else {
+        uv sync --extra cuda
     }
 } finally {
     Pop-Location

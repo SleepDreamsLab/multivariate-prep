@@ -1,4 +1,4 @@
-"""
+r"""
 AMICA (pamica) on BIDS derivative EEGLAB .set files.
 
 Per recording: import -> Chebyshev-II high-pass -> rank projection (GEDAI may
@@ -19,7 +19,7 @@ import scipy.io as sio
 from pamica import AMICA
 from scipy.signal import cheb2ord, cheby2, sosfiltfilt
 
-BIDS_MAT      = Path(r"C:\Postdoc\Code\multivariate-prep\BidsFiles\BIDS_DROP.mat")
+BIDS_MAT      = Path(__file__).parent / "BidsFiles" / "BIDS_DROP.mat"
 DERIV_IN_DIR  = "prep-ged"  # derivatives subfolder to read the desc-* .set files from
 DERIV_OUT_DIR = "pamica"    # derivatives subfolder to write AMICA output under
 DESC          = "zc2gedWakeBBAuto"
@@ -77,18 +77,25 @@ def deriv_paths(bids, desc, deriv_in):
 def highpass(X, sfreq):
     """Minimum-order Chebyshev-II high-pass, zero phase (= designfilt + filtfilt)."""
     order, wn = cheb2ord(PASS_FRQ, STOP_FRQ, PASS_RIPPLE, STOP_ATTEN, fs=sfreq)
+    print(f"  high-pass: order {order}, Wn {wn:.4g} (pass {PASS_FRQ} Hz / stop {STOP_FRQ} Hz @ {sfreq} Hz)")
     sos = cheby2(order, STOP_ATTEN, wn, btype="highpass", output="sos", fs=sfreq)
-    return sosfiltfilt(sos, X, axis=1)
+    t0 = time.perf_counter()
+    Xf = sosfiltfilt(sos, X, axis=1)
+    print(f"  high-pass: filtered {X.shape[0]} channels x {X.shape[1]} samples in {time.perf_counter() - t0:.1f} s")
+    return Xf
 
 
 def rank_projection(X, tol=1e-7):
     """Orthonormal k x n projection onto the non-degenerate subspace."""
+    print(f"  rank projection: eigendecomposing {X.shape[0]}x{X.shape[0]} covariance...")
+    t0 = time.perf_counter()
     d, V = np.linalg.eigh(X @ X.T / X.shape[1])
     d, V = d[::-1], V[:, ::-1]
     ratio = d / d[0]
     k = int(np.sum(ratio > tol))
     tail = " ".join(f"{r:.1e}" for r in ratio[max(k - 3, 0):k + 3])
-    print(f"  rank {k}/{len(d)} at tol {tol:.0e}; eigenvalue ratios across the cut: {tail}")
+    print(f"  rank {k}/{len(d)} at tol {tol:.0e}; eigenvalue ratios across the cut: {tail}"
+          f" ({time.perf_counter() - t0:.1f} s)")
     return V[:, :k].T
 
 
@@ -109,7 +116,7 @@ def run_amica(set_file, out_dir):
     Xr = P @ X
     del X
 
-    model = AMICA(n_models=1, n_mix=3)
+    model = AMICA(n_models=1, n_mix=3, device="cuda")
     t0 = time.perf_counter()
     model.fit(Xr, max_iter=MAX_ITER)
     elapsed = time.perf_counter() - t0

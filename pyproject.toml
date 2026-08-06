@@ -29,21 +29,20 @@ conflicts = [
 pamica = { path = "../pAMICA", editable = true }
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu130", extra = "cuda" },
+    { index = "pytorch-cu126", extra = "cuda" },
 ]
 
-# cu130 is the CUDA channel that currently ships torch 2.13.0 for win_amd64
-# (the version pamica's torch>=2.12.1 pin resolves to as of uv.lock). It needs
-# a reasonably current NVIDIA driver (check `nvidia-smi`'s "CUDA Version"
-# field); if the GPU machine's driver is too old for CUDA 13, either update
-# the driver or repoint this at an older cuXXX index together with an older
-# torch pin that channel still carries.
+# cu126 is the newest CUDA channel that actually carries torch 2.13.0 for
+# win_amd64 as of writing (cu128/cu129/cu130 don't have a win_amd64 2.13.0
+# wheel yet); it needs a driver new enough for CUDA 12.6 (check `nvidia-smi`'s
+# "CUDA Version" field). If a newer win_amd64 wheel shows up on a later cuXXX
+# channel, repoint this at it -- see download.pytorch.org/whl/<channel>/torch/.
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
