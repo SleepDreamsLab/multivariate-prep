@@ -191,9 +191,6 @@ for ifile = 1:numel(filesEEG)
         % continue
     end
 
-    %%% Average re-reference
-    EEG.data = EEG.data - sum(EEG.data, 1) / (size(EEG.data, 1) + 1);
-
     %%% Replace isolated N1 epochs at stage boundaries
     scoringDigits_NoN1 = gedai.killN1(scoringDigits);
 
@@ -216,6 +213,9 @@ for ifile = 1:numel(filesEEG)
 
     %%% Remove bad channels
     EEG = pop_select(EEG, 'nochannel', find(removed_channels));
+
+    %%% Average re-reference
+    EEG.data = EEG.data - sum(EEG.data, 1) / (size(EEG.data, 1) + 1);    
 
     %%% Epochs to plot
     epochsToPlot = gedai.resolveEpochsToPlot(opts.epochstoplot, scoringDigits);
