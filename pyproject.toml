@@ -1,0 +1,49 @@
+[project]
+name = "multivariate-prep"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "mne>=1.12.1",
+    "numpy>=2.5.1",
+    "pamica",
+    "scipy>=1.18.0",
+]
+
+# torch (pulled in transitively by pamica) is CPU-only from PyPI on Windows.
+# These extras pick the build explicitly: `uv sync` / `uv sync --extra cpu`
+# (default, works everywhere, matches this machine) vs `uv sync --extra cuda`
+# on a machine with an NVIDIA GPU. See setup-venv.ps1 -Cuda.
+[project.optional-dependencies]
+cpu = ["torch>=2.12.1"]
+cuda = ["torch>=2.12.1"]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cuda" },
+    ],
+]
+
+[tool.uv.sources]
+pamica = { path = "../pAMICA", editable = true }
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu130", extra = "cuda" },
+]
+
+# cu130 is the CUDA channel that currently ships torch 2.13.0 for win_amd64
+# (the version pamica's torch>=2.12.1 pin resolves to as of uv.lock). It needs
+# a reasonably current NVIDIA driver (check `nvidia-smi`'s "CUDA Version"
+# field); if the GPU machine's driver is too old for CUDA 13, either update
+# the driver or repoint this at an older cuXXX index together with an older
+# torch pin that channel still carries.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
