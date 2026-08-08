@@ -25,12 +25,13 @@ BIDS_MAT      = Path(__file__).parent / "BidsFiles" / "BIDS_DROP.mat"
 DERIV_IN_DIR  = "prep-ged"  # derivatives subfolder to read the desc-* .set files from
 DERIV_OUT_DIR = "pamica"    # derivatives subfolder to write AMICA output under
 DESC          = "zc2gedWakeBBAutoplusFSAutoPlus" # zc
+OUT_DESC      = None  # desc entity for the AMICA output filename; None = same as DESC (the input's own desc)
 SUBJECTS      = ["drop0001"]  # None = all subjects
 SESSIONS      = ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
 
 
-MAX_ITER = 1000  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
+MAX_ITER = 500  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
 DO_REJECT = False  # Fortran-style outlier rejection; costs ~2x GPU memory (pamica clones the full array
                    # every iteration under do_reject, core.py:1710) -- OOMs on this recording size/GPU
 DO_NEWTON = True   # Fortran-parity Newton preconditioner (tune newt_start/newtrate via fit() kwargs)
@@ -44,6 +45,14 @@ N_MIX      = 3              # AMICA: mixture components per source
 BLOCK_SIZE = 8192           # AMICA: E-step accumulation chunk size; pure chunking, doesn't change results
 DTYPE      = torch.float32  # AMICA: compute dtype
 DEVICE     = "cuda"         # AMICA: compute device
+
+# Decimation: ICA wants roughly MIN_SAMPLES_FACTOR x k^2 samples (k = rank kept by
+# rank_projection) to be well-determined; take every STRIDEth sample instead of
+# every sample when there's more data than that needs, up to MAX_STRIDE. Kept as
+# an "every Xth sample" stride rather than a plain sample cap so it still spans
+# the full recording instead of just its first portion.
+MIN_SAMPLES_FACTOR = 30  # target sample count = k^2 * this
+MAX_STRIDE = 4            # largest allowed stride; never take every 5th sample or coarser
 
 
 def _unwrap(x):
@@ -104,6 +113,32 @@ def deriv_paths(bids, desc, deriv_in):
     return paths
 
 
+def output_paths(data_file, deriv_out, out_desc):
+    """Derive this recording's AMICA output paths: deriv_out/sub-X/[ses-Y/]<mat_stem>,
+    where <mat_stem> is data_file's stem with its desc swapped to out_desc (default:
+    the same desc the input already has) and its trailing _eeg replaced with _amica.
+
+    Returns (mat_path, bin_dir, json_path): the .mat file, the same-named folder for
+    write_amica_output()'s binaries (no extension), and a same-named runtime json.
+    """
+    stem = data_file.stem
+    if not stem.endswith("_eeg"):
+        raise ValueError(f"expected a derivative filename ending in '_eeg', got: {stem}")
+    parts = stem.split("_")
+    sub = next(p for p in parts if p.startswith("sub-"))
+    ses = next((p for p in parts if p.startswith("ses-")), None)
+
+    effective_desc = DESC if out_desc is None else out_desc
+    mat_stem = stem[: -len("_eeg")].replace(f"desc-{DESC}", f"desc-{effective_desc}") + "_amica"
+
+    session_dir = deriv_out / sub / ses if ses else deriv_out / sub
+    return (
+        session_dir / f"{mat_stem}.mat",
+        session_dir / mat_stem,
+        session_dir / f"{mat_stem}_runtime.json",
+    )
+
+
 def highpass(X, sfreq):
     """Minimum-order Chebyshev-II high-pass, zero phase (= designfilt + filtfilt)."""
     order, wn = cheb2ord(PASS_FRQ, STOP_FRQ, PASS_RIPPLE, STOP_ATTEN, fs=sfreq)
@@ -138,7 +173,7 @@ def read_raw(data_file):
     raise ValueError(f"unsupported derivative extension: {data_file.suffix} ({data_file})")
 
 
-def run_amica(data_file, out_dir):
+def run_amica(data_file, mat_path, bin_dir, json_path):
     raw = read_raw(data_file)
     picks = mne.pick_types(raw.info, eeg=True, exclude="bads")
     if raw.info["bads"]:
@@ -155,16 +190,28 @@ def run_amica(data_file, out_dir):
     Xr = (P @ X).astype(np.float32)
     del X
 
+    # Decimate to every STRIDEth sample if there's more data than ICA needs (see
+    # MIN_SAMPLES_FACTOR/MAX_STRIDE above). Picks the largest stride in
+    # 1..MAX_STRIDE that still leaves >= k^2 * MIN_SAMPLES_FACTOR samples; falls
+    # back to stride=1 (no decimation) if even that isn't enough headroom.
+    k, n_full = Xr.shape
+    min_samples = k**2 * MIN_SAMPLES_FACTOR
+    stride = next((s for s in range(MAX_STRIDE, 0, -1) if n_full // s >= min_samples), 1)
+    if stride > 1:
+        Xr = Xr[:, ::stride]
+    print(f"  decimation: k={k}, target >= {min_samples} samples (k^2 x {MIN_SAMPLES_FACTOR}); "
+          f"stride={stride} -> {Xr.shape[1]}/{n_full} samples")
+
     model = AMICA(n_models=N_MODELS, n_mix=N_MIX, device=DEVICE)
     t0 = time.perf_counter()
     model.fit(Xr, max_iter=MAX_ITER, block_size=BLOCK_SIZE, dtype=DTYPE, do_reject=DO_REJECT, do_newton=DO_NEWTON)
     elapsed = time.perf_counter() - t0
     print(f"  AMICA fit took {elapsed / 60:.1f} min ({elapsed:.1f} s)")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
+    mat_path.parent.mkdir(parents=True, exist_ok=True)
     # Always written first: byte-identical to the Fortran reference, unaffected by
     # anything below, and the fallback if the .mat convention check fails.
-    model.write_amica_output(str(out_dir / "amicaout"))  # NB: in the rank-reduced space
+    model.write_amica_output(str(bin_dir))  # NB: in the rank-reduced space
 
     # get_unmixing_matrix() returns W^T *alone* -- only PART of the unmixing.
     # rank_projection() only rotates/decorrelates (no variance normalization), so
@@ -212,7 +259,7 @@ def run_amica(data_file, out_dir):
     icawinv = np.linalg.pinv(icaweights.astype(np.float64) @ icasphere)
 
     sio.savemat(
-        out_dir / "amica_eeglab.mat",
+        mat_path,
         {
             "icaweights": icaweights,
             "icasphere": icasphere,
@@ -229,7 +276,7 @@ def run_amica(data_file, out_dir):
             "LL": np.asarray(model.ll_history_, dtype=np.float64),
         },
     )
-    with open(out_dir / "amica_runtime.json", "w") as f:
+    with open(json_path, "w") as f:
         json.dump(
             {
                 "elapsed_seconds": elapsed,
@@ -246,6 +293,10 @@ def run_amica(data_file, out_dir):
                 "block_size": BLOCK_SIZE,
                 "dtype": str(DTYPE),
                 "device": DEVICE,
+                "min_samples_factor": MIN_SAMPLES_FACTOR,
+                "max_stride": MAX_STRIDE,
+                "stride": stride,
+                "n_samples": Xr.shape[1],
             },
             f,
             indent=2,
@@ -260,8 +311,8 @@ if __name__ == "__main__":
     deriv_out = rawdata / "derivatives" / DERIV_OUT_DIR
 
     for data_file in deriv_paths(bids, DESC, deriv_in):
-        out_dir = deriv_out / data_file.stem
-        if (out_dir / "amica_eeglab.mat").is_file():
+        mat_path, bin_dir, json_path = output_paths(data_file, deriv_out, OUT_DESC)
+        if mat_path.is_file():
             print(f"skip {data_file.stem} (already done)")
             continue
-        print(f"{data_file.stem}: final LL = {run_amica(data_file, out_dir):.5f}")
+        print(f"{data_file.stem}: final LL = {run_amica(data_file, mat_path, bin_dir, json_path):.5f}")
