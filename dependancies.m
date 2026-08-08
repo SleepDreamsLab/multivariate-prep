@@ -13,7 +13,7 @@ addpath('..\eeg-oscillations') % https://github.com/SvennoNito/eeg-oscillations
 % -> oscip.fit_fooof
 
 % EEGLAB
-eeglabpath = '..\EEGLAB_2025.0.0'; % https://sccn.ucsd.edu/eeglab/download.php
+eeglabpath = '..\EEGLAB'; % https://sccn.ucsd.edu/eeglab/download.php
 addpath(eeglabpath) 
 
 % Brainstorm
