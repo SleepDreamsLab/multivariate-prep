@@ -11,7 +11,6 @@ python run-pamica.py
 """
 
 import json
-import threading
 import time
 from pathlib import Path
 
@@ -43,9 +42,8 @@ RANK_TOL = 1e-7  # rank_projection: eigenvalue-ratio cutoff for the kept subspac
 N_MODELS   = 1              # AMICA: number of models
 N_MIX      = 3              # AMICA: mixture components per source
 BLOCK_SIZE = 8192           # AMICA: E-step accumulation chunk size; pure chunking, doesn't change results
-DTYPE      = torch.float64  # AMICA: compute dtype
+DTYPE      = torch.float32  # AMICA: compute dtype
 DEVICE     = "cuda"         # AMICA: compute device
-MEM_MONITOR_INTERVAL = 60   # seconds between GPU memory polls during fit(); 0/None disables
 
 
 def _unwrap(x):
@@ -131,39 +129,6 @@ def rank_projection(X, tol=RANK_TOL):
     return V[:, :k].T
 
 
-class GPUMemoryMonitor:
-    """Background thread that periodically prints torch's own CUDA memory
-    counters while a blocking call (like AMICA's fit()) runs on the main
-    thread -- fit() has no per-iteration hook to poll from, so this is the
-    only way to see peak allocation over the course of a fit rather than
-    only its final value. Reports this process's own allocation, unlike
-    nvidia-smi which shows total GPU usage across all processes.
-    """
-
-    def __init__(self, interval=MEM_MONITOR_INTERVAL, label=""):
-        self.interval = interval
-        self.label = label
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-
-    def _run(self):
-        while not self._stop.wait(self.interval):
-            allocated = torch.cuda.memory_allocated() / 1e9
-            peak = torch.cuda.max_memory_allocated() / 1e9
-            reserved = torch.cuda.memory_reserved() / 1e9
-            print(f"  [mem{self.label}] allocated={allocated:.2f} GB peak={peak:.2f} GB reserved={reserved:.2f} GB")
-
-    def __enter__(self):
-        if self.interval:
-            self._thread.start()
-        return self
-
-    def __exit__(self, *exc_info):
-        self._stop.set()
-        if self.interval:
-            self._thread.join()
-
-
 def read_raw(data_file):
     """Load a derivative recording with the MNE reader matching its extension."""
     if data_file.suffix == ".set":
@@ -192,8 +157,7 @@ def run_amica(data_file, out_dir):
 
     model = AMICA(n_models=N_MODELS, n_mix=N_MIX, device=DEVICE)
     t0 = time.perf_counter()
-    with GPUMemoryMonitor(label=f" {data_file.stem}"):
-        model.fit(Xr, max_iter=MAX_ITER, block_size=BLOCK_SIZE, dtype=DTYPE, do_reject=DO_REJECT, do_newton=DO_NEWTON)
+    model.fit(Xr, max_iter=MAX_ITER, block_size=BLOCK_SIZE, dtype=DTYPE, do_reject=DO_REJECT, do_newton=DO_NEWTON)
     elapsed = time.perf_counter() - t0
     print(f"  AMICA fit took {elapsed / 60:.1f} min ({elapsed:.1f} s)")
 
