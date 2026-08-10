@@ -42,6 +42,7 @@ function failures = run_gedai_bids(BIDS, opts)
 %   Subject filter
 %   --------------
 %   subjectfilter     Cell array of subject ID strings; {} = all subjects.
+%   sessionfilter     Cell array of session ID strings; {} = all sessions.
 %
 %   GEDAI
 %   -----
@@ -82,6 +83,7 @@ arguments
 
     %--- Subject filter ---
     opts.subjectfilter     cell          = {}
+    opts.sessionfilter     cell          = {}
 
     %--- GEDAI ---
     opts.runmode {mustBeMember(opts.runmode, {'WholeNight', 'StageSpecific', 'StateWise'})} = 'StageSpecific'
@@ -119,6 +121,11 @@ for ifile = 1:numel(filesEEG)
 
     %%% Subject filter
     if ~isempty(opts.subjectfilter) && ~contains(fileID, opts.subjectfilter)
+        continue
+    end
+
+    %%% Session filter
+    if ~isempty(opts.sessionfilter) && ~contains(fileID, opts.sessionfilter)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
