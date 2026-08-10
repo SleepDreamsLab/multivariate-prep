@@ -49,6 +49,11 @@ for isub = 1:numel(BIDS.participants.content.participant_id)
         'filtdesc', 'zc');
     
     % *** Run GEDAI
+    % Run with wake as auto+
+    r = gedai.defaultRuns();
+    r{1}.GEDAIModeBB_dict(1) = "auto+";   % 1 = Wake
+    r{1}.GEDAIMode_dict(1) = "auto+";   % 1 = Wake
+
     fails.gedai = run_gedai_bids(BIDS, ...
         'RunMode', 'StageSpecific', ...
         'acqlabel', acqlabel, ...  
