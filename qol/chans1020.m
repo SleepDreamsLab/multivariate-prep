@@ -59,6 +59,7 @@ if opts.add_eog
     EEG.data(end+1,:) = EEG.data(eogchans(4),:) - EEG.data(eogchans(2),:);
     EEG.chanlocs(end+1).labels = 'EOG2';
     EEG.nbchan = size(EEG.data, 1);
+    index1020 = [index1020, EEG.nbchan-1, EEG.nbchan];
 end
 
 % Select 10-20 electrodes
