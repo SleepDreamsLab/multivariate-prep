@@ -37,4 +37,5 @@ addpath('patches')
 addpath('GEDAI')
 addpath('BidsFiles')
 addpath('chanlocs')
+addpath('ICA')
 
