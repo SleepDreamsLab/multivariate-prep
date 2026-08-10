@@ -14,7 +14,8 @@
       "Bash(grep *)",
       "Bash(.venv/Scripts/python.exe -c ' *)",
       "WebFetch(domain:eeglab.org)",
-      "Bash(./.venv/Scripts/python -c ' *)"
+      "Bash(./.venv/Scripts/python -c ' *)",
+      "Bash(./.venv/Scripts/python -m py_compile run-pamica.py run-pamica-raw.py)"
     ]
   }
 }
