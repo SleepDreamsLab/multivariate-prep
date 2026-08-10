@@ -24,17 +24,35 @@ from scipy.signal import cheb2ord, cheby2, sosfiltfilt
 BIDS_MAT      = Path(__file__).parent / "BidsFiles" / "BIDS_DROP.mat"
 DERIV_IN_DIR  = "prep-ged"  # derivatives subfolder to read the desc-* .set files from
 DERIV_OUT_DIR = "pamica"    # derivatives subfolder to write AMICA output under
-DESC          = "zc2gedWakeBBAuto"
-DESC          = "zc"
+DESC          = "zc2gedWakeBBAutoplusFSAutoPlus" # zc
+OUT_DESC      = None  # desc entity for the AMICA output filename; None = same as DESC (the input's own desc)
 SUBJECTS      = ["drop0001"]  # None = all subjects
 SESSIONS      = ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
 
 
-MAX_ITER = 2000  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
+MAX_ITER = 500  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
 DO_REJECT = False  # Fortran-style outlier rejection; costs ~2x GPU memory (pamica clones the full array
                    # every iteration under do_reject, core.py:1710) -- OOMs on this recording size/GPU
+DO_NEWTON = True   # Fortran-parity Newton preconditioner (tune newt_start/newtrate via fit() kwargs)
 PASS_FRQ, STOP_FRQ, PASS_RIPPLE, STOP_ATTEN = 1.6, 0.8, 0.05, 30
+RANK_TOL = 1e-7  # rank_projection: eigenvalue-ratio cutoff for the kept subspace
+
+# AMICA knobs below are usually left alone -- named here (rather than left as call-site
+# literals) so their values get recorded in amica_runtime.json for provenance.
+N_MODELS   = 1              # AMICA: number of models
+N_MIX      = 3              # AMICA: mixture components per source
+BLOCK_SIZE = 8192           # AMICA: E-step accumulation chunk size; pure chunking, doesn't change results
+DTYPE      = torch.float32  # AMICA: compute dtype
+DEVICE     = "cuda"         # AMICA: compute device
+
+# Decimation: ICA wants roughly MIN_SAMPLES_FACTOR x k^2 samples (k = rank kept by
+# rank_projection) to be well-determined; take every STRIDEth sample instead of
+# every sample when there's more data than that needs, up to MAX_STRIDE. Kept as
+# an "every Xth sample" stride rather than a plain sample cap so it still spans
+# the full recording instead of just its first portion.
+MIN_SAMPLES_FACTOR = 30  # target sample count = k^2 * this
+MAX_STRIDE = 4            # largest allowed stride; never take every 5th sample or coarser
 
 
 def _unwrap(x):
@@ -95,6 +113,32 @@ def deriv_paths(bids, desc, deriv_in):
     return paths
 
 
+def output_paths(data_file, deriv_out, out_desc):
+    """Derive this recording's AMICA output paths: deriv_out/sub-X/[ses-Y/]<mat_stem>,
+    where <mat_stem> is data_file's stem with its desc swapped to out_desc (default:
+    the same desc the input already has) and its trailing _eeg replaced with _amica.
+
+    Returns (mat_path, bin_dir, json_path): the .mat file, the same-named folder for
+    write_amica_output()'s binaries (no extension), and a same-named runtime json.
+    """
+    stem = data_file.stem
+    if not stem.endswith("_eeg"):
+        raise ValueError(f"expected a derivative filename ending in '_eeg', got: {stem}")
+    parts = stem.split("_")
+    sub = next(p for p in parts if p.startswith("sub-"))
+    ses = next((p for p in parts if p.startswith("ses-")), None)
+
+    effective_desc = DESC if out_desc is None else out_desc
+    mat_stem = stem[: -len("_eeg")].replace(f"desc-{DESC}", f"desc-{effective_desc}") + "_amica"
+
+    session_dir = deriv_out / sub / ses if ses else deriv_out / sub
+    return (
+        session_dir / f"{mat_stem}.mat",
+        session_dir / mat_stem,
+        session_dir / f"{mat_stem}_runtime.json",
+    )
+
+
 def highpass(X, sfreq):
     """Minimum-order Chebyshev-II high-pass, zero phase (= designfilt + filtfilt)."""
     order, wn = cheb2ord(PASS_FRQ, STOP_FRQ, PASS_RIPPLE, STOP_ATTEN, fs=sfreq)
@@ -106,7 +150,7 @@ def highpass(X, sfreq):
     return Xf
 
 
-def rank_projection(X, tol=1e-7):
+def rank_projection(X, tol=RANK_TOL):
     """Orthonormal k x n projection onto the non-degenerate subspace."""
     print(f"  rank projection: eigendecomposing {X.shape[0]}x{X.shape[0]} covariance...")
     t0 = time.perf_counter()
@@ -129,7 +173,7 @@ def read_raw(data_file):
     raise ValueError(f"unsupported derivative extension: {data_file.suffix} ({data_file})")
 
 
-def run_amica(data_file, out_dir):
+def run_amica(data_file, mat_path, bin_dir, json_path):
     raw = read_raw(data_file)
     picks = mne.pick_types(raw.info, eeg=True, exclude="bads")
     if raw.info["bads"]:
@@ -146,36 +190,117 @@ def run_amica(data_file, out_dir):
     Xr = (P @ X).astype(np.float32)
     del X
 
-    model = AMICA(n_models=1, n_mix=3, device="cuda")
+    # Decimate to every STRIDEth sample if there's more data than ICA needs (see
+    # MIN_SAMPLES_FACTOR/MAX_STRIDE above). Picks the largest stride in
+    # 1..MAX_STRIDE that still leaves >= k^2 * MIN_SAMPLES_FACTOR samples; falls
+    # back to stride=1 (no decimation) if even that isn't enough headroom.
+    k, n_full = Xr.shape
+    min_samples = k**2 * MIN_SAMPLES_FACTOR
+    stride = next((s for s in range(MAX_STRIDE, 0, -1) if n_full // s >= min_samples), 1)
+    if stride > 1:
+        Xr = Xr[:, ::stride]
+    print(f"  decimation: k={k}, target >= {min_samples} samples (k^2 x {MIN_SAMPLES_FACTOR}); "
+          f"stride={stride} -> {Xr.shape[1]}/{n_full} samples")
+
+    model = AMICA(n_models=N_MODELS, n_mix=N_MIX, device=DEVICE)
     t0 = time.perf_counter()
-    model.fit(Xr, max_iter=MAX_ITER, block_size=8192, dtype=torch.float32, do_reject=DO_REJECT)
+    model.fit(Xr, max_iter=MAX_ITER, block_size=BLOCK_SIZE, dtype=DTYPE, do_reject=DO_REJECT, do_newton=DO_NEWTON)
     elapsed = time.perf_counter() - t0
     print(f"  AMICA fit took {elapsed / 60:.1f} min ({elapsed:.1f} s)")
 
-    A = model.get_mixing_matrix()
-    # Confirm get_mixing_matrix is sensor space, i.e. sources == pinv(A) @ data.
-    ref, chk = model.transform(Xr[:, :5000]), np.linalg.pinv(A) @ Xr[:, :5000]
-    r = np.array([np.corrcoef(a, b)[0, 1] for a, b in zip(ref, chk)])
-    if np.abs(r).min() < 0.999:
-        print(f"WARNING {data_file.stem}: mixing-matrix convention check failed ({np.abs(r).min():.3f})")
+    mat_path.parent.mkdir(parents=True, exist_ok=True)
+    # Always written first: byte-identical to the Fortran reference, unaffected by
+    # anything below, and the fallback if the .mat convention check fails.
+    model.write_amica_output(str(bin_dir))  # NB: in the rank-reduced space
 
-    A = A[:, model.variance_order()]  # EEGLAB order: IC1 = highest variance
-    out_dir.mkdir(parents=True, exist_ok=True)
-    model.write_amica_output(str(out_dir / "amicaout"))  # NB: in the rank-reduced space
+    # get_unmixing_matrix() returns W^T *alone* -- only PART of the unmixing.
+    # rank_projection() only rotates/decorrelates (no variance normalization), so
+    # with do_sphere defaulting True, pamica does real additional whitening of Xr
+    # internally; the actual unmixing that operates on Xr is W^T @ sphere (this is
+    # exactly how pamica's own mir() composes it, core.py:2086). Using W^T alone
+    # here was the bug behind the earlier 0.012 (and a later 236/236) convention-
+    # check failures -- not float32 pinv conditioning as first suspected.
+    sphere = model.model_.sphere.detach().cpu().numpy()
+    W_full = model.get_unmixing_matrix() @ sphere
+
+    # Sanity check: W_full @ data should reproduce model.transform(data). These are
+    # two independent pamica code paths (transform() re-runs the forward pass;
+    # W_full reads the stored W/sphere tensors directly), so agreement here is a
+    # real check on what's about to be saved, not a tautology. transform() also
+    # subtracts data-space mean/center offsets that W_full @ data doesn't -- but
+    # those are per-source constants, invisible to a correlation check, so this
+    # still validates the part that matters (the linear/sphere composition). A
+    # failure here must stop the .mat from being written rather than just warn.
+    ref, chk = model.transform(Xr[:, :5000]), W_full @ Xr[:, :5000]
+    r = np.abs(np.array([np.corrcoef(a, b)[0, 1] for a, b in zip(ref, chk)]))
+    n_bad = int(np.sum(r < 0.999))
+    if n_bad:
+        raise RuntimeError(
+            f"{data_file.stem}: mixing-matrix convention check failed -- "
+            f"{n_bad}/{len(r)} components below 0.999 |corr| "
+            f"(median {np.median(r):.6f}, min {r.min():.6f}). "
+            f"amicaout was written; amica_eeglab.mat was not."
+        )
+
+    # Diagnostic only: A and W are maintained as mutual (approximate) inverses
+    # within pamica's own internal EM updates, so this checks that internal
+    # consistency -- it does NOT exercise the sphere-composition above (both sides
+    # omit it identically), so it will not catch that class of bug on its own.
+    W_pinv = np.linalg.pinv(model.get_mixing_matrix())
+    r_pinv = np.abs(np.array([np.corrcoef(a, b)[0, 1] for a, b in zip(model.get_unmixing_matrix(), W_pinv)]))
+    print(f"  diagnostic: get_unmixing_matrix() vs pinv(get_mixing_matrix()) -- "
+          f"median |corr|={np.median(r_pinv):.6f}, min={r_pinv.min():.6f}, "
+          f"{int(np.sum(r_pinv < 0.999))}/{len(r_pinv)} below 0.999")
+
+    order = model.variance_order()
+    icaweights = W_full[order, :]  # EEGLAB order: IC1 = highest variance
+    icasphere = P  # kept in float64 throughout
+    # loadmodout15's formula: A = pinv(W @ S), cast to float64 before inverting.
+    icawinv = np.linalg.pinv(icaweights.astype(np.float64) @ icasphere)
+
     sio.savemat(
-        out_dir / "amica_eeglab.mat",
+        mat_path,
         {
-            "icaweights": np.linalg.pinv(A),
-            "icasphere": P,
-            "icawinv": P.T @ A,
+            "icaweights": icaweights,
+            "icasphere": icasphere,
+            "icawinv": icawinv,
             "chanlabels": np.array(labels, dtype=object),
             "setfile": str(data_file),
             "srate": sfreq,
             "final_ll": model.final_ll_,
+            "stop_reason": model.stop_reason_,
+            "n_iter": len(model.ll_history_),
+            "rank_kept": Xr.shape[0],
+            "n_chan": len(labels),
+            "dtype": str(Xr.dtype),
+            "LL": np.asarray(model.ll_history_, dtype=np.float64),
         },
     )
-    with open(out_dir / "amica_runtime.json", "w") as f:
-        json.dump({"elapsed_seconds": elapsed}, f, indent=2)
+    with open(json_path, "w") as f:
+        json.dump(
+            {
+                "elapsed_seconds": elapsed,
+                "max_iter": MAX_ITER,
+                "do_reject": DO_REJECT,
+                "do_newton": DO_NEWTON,
+                "pass_frq": PASS_FRQ,
+                "stop_frq": STOP_FRQ,
+                "pass_ripple": PASS_RIPPLE,
+                "stop_atten": STOP_ATTEN,
+                "rank_tol": RANK_TOL,
+                "n_models": N_MODELS,
+                "n_mix": N_MIX,
+                "block_size": BLOCK_SIZE,
+                "dtype": str(DTYPE),
+                "device": DEVICE,
+                "min_samples_factor": MIN_SAMPLES_FACTOR,
+                "max_stride": MAX_STRIDE,
+                "stride": stride,
+                "n_samples": Xr.shape[1],
+            },
+            f,
+            indent=2,
+        )
     return model.final_ll_
 
 
@@ -186,8 +311,8 @@ if __name__ == "__main__":
     deriv_out = rawdata / "derivatives" / DERIV_OUT_DIR
 
     for data_file in deriv_paths(bids, DESC, deriv_in):
-        out_dir = deriv_out / data_file.stem
-        if (out_dir / "amica_eeglab.mat").is_file():
+        mat_path, bin_dir, json_path = output_paths(data_file, deriv_out, OUT_DESC)
+        if mat_path.is_file():
             print(f"skip {data_file.stem} (already done)")
             continue
-        print(f"{data_file.stem}: final LL = {run_amica(data_file, out_dir):.5f}")
+        print(f"{data_file.stem}: final LL = {run_amica(data_file, mat_path, bin_dir, json_path):.5f}")
