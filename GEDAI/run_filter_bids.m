@@ -44,12 +44,10 @@ arguments
     opts.zapline          (1,1) logical  = true
     opts.cleanline        (1,1) logical  = true
     opts.zapline2         (1,1) logical  = false
-    opts.noisefreqs                      = 'line'
+    opts.noisefreqs                      = 50
     opts.adaptiveNremove  (1,1) logical  = true
     opts.fixedNremove     (1,1) double   = 1
-    opts.chunkLength      (1,1) double   = 0
-    opts.minfreq          (1,1) double   = 17
-    opts.maxfreq          (1,1) double   = 0
+    opts.chunkLength      (1,1) double   = 300
     opts.plotResults      (1,1) logical  = true
 
     %--- Subject filter ---
@@ -119,8 +117,6 @@ for ifile = 1:numel(filesEEG)
         'adaptiveNremove', opts.adaptiveNremove, ...
         'fixedNremove',    opts.fixedNremove, ...
         'chunkLength',     opts.chunkLength, ...
-        'minfreq',         opts.minfreq, ...
-        'maxfreq',         opts.maxfreq, ...
         'plotResults',     opts.plotResults);
     if opts.plotResults
         nm = strrep(get(gcf, 'Name'), ' ', '_');
