@@ -42,8 +42,8 @@ arguments
     opts.targetsrate      (1,1) double   = 0
     opts.removeDC         (1,1) logical  = true
     opts.zapline          (1,1) logical  = true
-    opts.cleanline        (1,1) logical  = false
-    opts.zapline2         (1,1) logical  = true
+    opts.cleanline        (1,1) logical  = true
+    opts.zapline2         (1,1) logical  = false
     opts.noisefreqs                      = 'line'
     opts.adaptiveNremove  (1,1) logical  = true
     opts.fixedNremove     (1,1) double   = 1

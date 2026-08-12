@@ -27,12 +27,10 @@ arguments
     opts.KeepTime        struct        = struct()
     opts.cleanline       (1,1) logical = true
     opts.JsonFile        (1,1) string  = ""
-    opts.noisefreqs                    = 'line'
+    opts.noisefreqs                    = 50
     opts.adaptiveNremove (1,1) logical = true
     opts.fixedNremove    (1,1) double  = 1
-    opts.chunkLength     (1,1) double  = 0
-    opts.minfreq         (1,1) double  = 17
-    opts.maxfreq         (1,1) double  = 99
+    opts.chunkLength     (1,1) double  = 300
     opts.plotResults     (1,1) logical = true
 end
 
@@ -68,9 +66,9 @@ if opts.zapline
         'adaptiveNremove', opts.adaptiveNremove, ...
         'fixedNremove',    opts.fixedNremove, ...
         'chunkLength',     opts.chunkLength, ...
-        'minfreq',         opts.minfreq, ...
-        'maxfreq',         opts.maxfreq, ...
         'plotResults',     opts.plotResults);
+    EEG.etc.zapline.config    = zaplineConfig;
+    EEG.etc.zapline.analytics = analyticsResults;    
     KeepTime.Zapline = toc(D);
     fprintf('ZapLine-plus: %.2f min\n', KeepTime.Zapline / 60);
 end
@@ -88,12 +86,16 @@ if opts.cleanline
 %     fprintf('Only keep those with noise ratio >1.5: %s Hz\n', mat2str(round(linefreqs,2)));
 
     D = tic; fprintf('\nClean line ...\n')
-    EEG.data = double(EEG.data);
-    EEG = pop_cleanline(EEG, ...
-        'chanlist', 1:EEG.nbchan, ...
-        'linefreqs', 50, ...
-        'winsize', 4, ...
-        'winstep', 2);
+    % EEG.data = double(EEG.data);
+    EEG = cleanline_fast(EEG, 'linefreqs', [opts.noisefreqs opts.noisefreqs*2], ...
+        'winsize', 4, 'winstep', 2, 'sigtest', true, 'pad', 2);
+
+    % EEG = pop_cleanline(EEG, ...
+    %     'chanlist', 1:EEG.nbchan, ...
+    %     'linefreqs', 50, ...
+    %     'winsize', 4, ...
+    %     'winstep', 2, ...
+    %     'computepower', false);
     KeepTime.Cleanline = toc(D);
 
 end
