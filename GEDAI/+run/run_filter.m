@@ -17,6 +17,33 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %   cleanline       apply CleanLine after Zapline               (default true)
 %   JsonFile        full path for a JSON sidecar with processing timings;
 %                   '' = skip                                  (default '')
+%
+% Methods secton:
+%
+% Continuous EEG (256 channels, 250 Hz) was high-pass filtered to remove DC offset and then 
+% cleaned of power-line artifacts using Zapline-plus (Klug & Kloosterman, 2022), an extension 
+% of the Zapline algorithm (de Cheveigné, 2020). Zapline separates the data into a 
+% line-frequency-dominated and a residual component using a comb filter, isolates the artifactual 
+% subspace via DSS applied to the line frequency and its harmonics, and removes it by spatial 
+% projection, thereby avoiding the spectral distortion introduced by notch filtering. The target 
+% frequency was fixed at 50 Hz; at a 250 Hz sampling rate the fundamental and its second harmonic 
+% (100 Hz) were removed jointly. To accommodate non-stationarity of the line artifact across the 
+% [8-h] recordings, data were processed in fixed 300-s chunks, with the individual noise peak 
+% re-estimated within each chunk (search window 50 ± 3 Hz) and the number of removed components 
+% determined adaptively per chunk by iterative outlier detection on the DSS component scores 
+% (minimum 1 component). The detection threshold was adapted iteratively until the cleaned 
+% spectrum showed neither residual noise above nor over-correction below the surrounding-noise 
+% criterion. Residual artifacts at 50 and 100 Hz were subsequently attenuated using 
+% a custom parallelised reimplementation CleanLine (Mullen, 2012; EEGLAB), leveraging 
+% multi-taper sinusoidal regression, .
+% Within 4-s windows advanced in 2-s steps, the Thomson F-test for a deterministic sinusoid 
+% was evaluated at 50 and 100 Hz using 7 Slepian tapers (time–bandwidth product 4, 
+% resolution bandwidth 2 Hz) and an FFT zero-padded to 4096 points (0.061 Hz bin spacing). 
+% Sinusoids reaching p < 0.01 were fitted by least squares and subtracted; target frequencies 
+% not reaching significance in a given window and channel were left unmodified. Fitted 
+% components were crossfaded sigmoidally across the 2-s overlap between adjacent windows.
+% Unlike the default CleanLine implementation, which subtracts an estimated sinusoid at each 
+% target frequency regardless of significance, subtraction here was conditional on the F-test.
 
 arguments
     EEG                  struct
