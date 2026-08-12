@@ -17,6 +17,11 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %   cleanline       apply CleanLine after Zapline               (default true)
 %   JsonFile        full path for a JSON sidecar with processing timings;
 %                   '' = skip                                  (default '')
+%   zeropatchseconds   cut out all-zero patches (amplifier crash padding) longer
+%                   than this many seconds before filtering; 0 = skip (default 5)
+%   restorezeropatches  put those patches back before returning. Set false if the
+%                   caller does more filtering and restores itself with
+%                   run.restore_zero_patches before saving        (default true)
 %
 % Methods secton:
 %
@@ -59,6 +64,8 @@ arguments
     opts.fixedNremove    (1,1) double  = 1
     opts.chunkLength     (1,1) double  = 300
     opts.plotResults     (1,1) logical = true
+    opts.zeropatchseconds   (1,1) double  = 5
+    opts.restorezeropatches (1,1) logical = true
 end
 
 KeepTime = opts.KeepTime;
@@ -71,6 +78,12 @@ if opts.targetsrate > 0 && EEG.srate ~= opts.targetsrate
     D = tic; fprintf('Resampling %d → %d Hz ...\n', EEG.srate, opts.targetsrate)
     EEG = pop_resample(EEG, opts.targetsrate);
     KeepTime.Downsample = toc(D);
+end
+
+%%% Cut out all-zero patches (amplifier crash padding) so no filter ever sees them.
+%%% Must happen before the DC filter: filtfilt would smear them into large transients.
+if opts.zeropatchseconds > 0
+    EEG = run.excise_zero_patches(EEG, 'minseconds', opts.zeropatchseconds);
 end
 
 %%% Build filters
@@ -125,6 +138,13 @@ if opts.cleanline
     %     'computepower', false);
     KeepTime.Cleanline = toc(D);
 
+end
+
+%%% Put the all-zero patches back so the data regains its original length and timing.
+%%% run_filter_bids sets this to false and restores later, after its own second Zapline
+%%% pass, so that pass also runs on patch-free data.
+if opts.restorezeropatches
+    EEG = run.restore_zero_patches(EEG);
 end
 
 %%% Write JSON sidecar

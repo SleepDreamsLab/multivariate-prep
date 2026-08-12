@@ -23,6 +23,9 @@ function failures = run_filter_bids(BIDS, opts)
 %   zapline         apply Zapline-plus line-noise removal       (default true)
 %   cleanline       apply CleanLine after Zapline               (default true)
 %   zapline2        apply a second Zapline-plus pass after CleanLine (default false)
+%   zeropatchseconds  cut out all-zero patches (amplifier crash padding) longer than
+%                   this many seconds before filtering, restore them before saving;
+%                   0 = skip                                    (default 5)
 %   subjectfilter   cell array of subject ID strings; {} = all subjects
 
 arguments
@@ -49,6 +52,7 @@ arguments
     opts.fixedNremove     (1,1) double   = 1
     opts.chunkLength      (1,1) double   = 300
     opts.plotResults      (1,1) logical  = true
+    opts.zeropatchseconds (1,1) double   = 5
 
     %--- Subject filter ---
     opts.subjectfilter    cell            = {}
@@ -112,7 +116,9 @@ for ifile = 1:numel(filesEEG)
         'adaptiveNremove', opts.adaptiveNremove, ...
         'fixedNremove',    opts.fixedNremove, ...
         'chunkLength',     opts.chunkLength, ...
-        'plotResults',     opts.plotResults);
+        'plotResults',     opts.plotResults, ...
+        'zeropatchseconds',   opts.zeropatchseconds, ...
+        'restorezeropatches', false);
     if opts.plotResults
         nm = strrep(get(gcf, 'Name'), ' ', '_');
         print(gcf, fullfile(figDir, [fileID '_zapline_' nm '.png']), '-dpng', '-r150');
@@ -137,6 +143,9 @@ for ifile = 1:numel(filesEEG)
         print(gcf, fullfile(figDir, [fileID '_zapline2_' nm '.png']), '-dpng', '-r150');
         pause(3); close(gcf);
     end
+
+    %%% Put the all-zero patches back, so the saved file keeps its original length
+    EEG = run.restore_zero_patches(EEG);
 
     %%% Save BrainVision output
     EEG.data = single(EEG.data);
