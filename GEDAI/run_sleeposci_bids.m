@@ -36,7 +36,7 @@ function failures = run_sleeposci_bids(BIDS, opts)
 %   ---
 %   tasklabel         BIDS task label(s) to query. Default: {'Sleep','sleep'}.
 %   acqlabel    BIDS recording label to query. Default: '125Hz'.
-%   noteegchannels    Channel indices to drop. Default: 257:264.
+%   noteegchannels    Channel indices to drop. Default: 257:300.
 %   net               EEG net identifier passed to chans1020. Default: 'EGI256'.
 %
 %   Subject filter

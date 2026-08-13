@@ -1,7 +1,10 @@
 function failures = run_filter_bids(BIDS, opts)
-% RUN_FILTER_BIDS  Preprocess BIDS EEG files: import, resample, DC removal, Zapline.
-%   Results are saved as BrainVision files under
-%   <BIDS root>/derivatives/prep-ged/<sub>/<ses>/.
+% RUN_FILTER_BIDS  Preprocess BIDS EEG files: import, resample, DC removal, bad
+%   channel removal, Zapline.
+%   Results are saved as EEGLAB .set files under
+%   <BIDS root>/derivatives/prep-ged/<sub>/<ses>/. .set rather than BrainVision
+%   because chanlocs and urchanlocs have to survive to the next stage: bad channels
+%   are dropped here, and only urchanlocs says which ones to interpolate back.
 %
 % USAGE:
 %   run_filter_bids(BIDS)
@@ -17,7 +20,7 @@ function failures = run_filter_bids(BIDS, opts)
 %   desc            BIDS desc entity for output filename         (default 'filt')
 %   tasklabel       BIDS task label(s) to query                 (default {'Sleep','sleep'})
 %   acqlabel        BIDS recording label to query               (default '125Hz')
-%   noteegchannels  channel indices to drop                     (default 257:264)
+%   noteegchannels  channel indices to drop                     (default 257:300)
 %   targetsrate     resample target in Hz; 0 = skip             (default 125)
 %   removeDC        apply DC-removal filter                     (default true)
 %   zapline         apply Zapline-plus line-noise removal       (default true)
@@ -26,6 +29,14 @@ function failures = run_filter_bids(BIDS, opts)
 %   zeropatchseconds  cut out all-zero patches (amplifier crash padding) longer than
 %                   this many seconds before filtering, restore them before saving;
 %                   0 = skip                                    (default 5)
+%   badchannels     detect and remove bad channels after DC removal and before
+%                   Zapline, while the line noise clean_channels keys on is still
+%                   there. The mask is cached as
+%                   <fileID>_desc-<desc>_badchans.mat next to the filtered file and
+%                   read back by run_gedai_bids for the leadfield  (default true)
+%   sfppath         path passed to the SFP resolver; clean_channels needs channel
+%                   locations                                   (default BIDS root)
+%   savefileext     '.set' (EEGLAB) or anything else for BrainVision (default '.set')
 %   subjectfilter   cell array of subject ID strings; {} = all subjects
 %   sessionfilter   cell array of session ID strings; {} = all sessions
 
@@ -38,11 +49,12 @@ arguments
     opts.figpath          char    = ''
     opts.refresh (1,1)    logical = false
     opts.desc             char    = 'filt'
+    opts.savefileext      char    = '.set'
 
     %--- EEG ---
     opts.tasklabel                       = {'Sleep', 'sleep'}
     opts.acqlabel   char                 = ''
-    opts.noteegchannels   (1,:) double   = 257:299
+    opts.noteegchannels   (1,:) double   = 257:300
     opts.targetsrate      (1,1) double   = 0
     opts.removeDC         (1,1) logical  = true
     opts.zapline          (1,1) logical  = true
@@ -54,6 +66,10 @@ arguments
     opts.chunkLength      (1,1) double   = 300
     opts.plotResults      (1,1) logical  = true
     opts.zeropatchseconds (1,1) double   = 5
+
+    %--- Bad channels ---
+    opts.badchannels      (1,1) logical  = true
+    opts.sfppath          char           = BIDS.pth
 
     %--- Subject filter ---
     opts.subjectfilter    cell            = {}
@@ -92,7 +108,7 @@ for ifile = 1:numel(filesEEG)
     %%% Build output paths
     subDir   = fullfile(['sub-' p.entities.sub], ['ses-' p.entities.ses]);
     outDir   = fullfile(opts.savepath, subDir);
-    outFile  = fullfile(outDir, [fileID '_desc-' opts.desc '_eeg.dat']);
+    outFile  = fullfile(outDir, [fileID '_desc-' opts.desc '_eeg' opts.savefileext]);
     figDir   = fullfile(opts.figpath, ['desc-' opts.desc], subDir);
     if ~exist(figDir, 'dir'), mkdir(figDir); end
     fprintf('Output → %s\n', outFile)
@@ -111,6 +127,48 @@ for ifile = 1:numel(filesEEG)
     EEG = eeg_import(eegFile);
     KeepTime = struct('EEGimport', toc(D));
 
+    %%% Drop non-EEG channels
+    %%% Done here rather than inside run.run_filter so the channel locations below line
+    %%% up with the EEG channels (run.run_filter repeats it as a no-op).
+    EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
+
+    %%% Read SFP file (dome-solved channel locations)
+    %%% clean_channels needs coordinates, and .set output carries chanlocs/urchanlocs
+    %%% forward so the channels removed below can be interpolated back downstream.
+    if ~isempty(opts.sfppath)
+        sfpFile = gedai.matchSfpFile(opts.sfppath, p.entities.sub, p.entities.ses);
+        fprintf('\nReading %s ...\n', sfpFile)
+        chanlocs     = readlocs(sfpFile);
+        chanlocs_reg = register_fiducials(chanlocs);
+        EEG.chanlocs = chanlocs_reg(1:EEG.nbchan);
+
+        % Urchanlocs
+        EEG.urchanlocs = EEG.chanlocs;
+        for iCh = 1:numel(EEG.chanlocs)
+            EEG.chanlocs(iCh).urchan = iCh;
+        end
+
+    elseif strcmp(BIDS.description.Name, {'ercp'})
+        chanfile = fullfile(fileparts(eegFile), [fileID, '_channels.tsv']);
+        elecfile = fullfile(fileparts(eegFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
+        [EEG, channelData, elecData] = bids_importchanlocs(EEG, chanfile, elecfile);
+
+        % Urchanlocs
+        EEG.urchanlocs = EEG.chanlocs;
+        for iCh = 1:numel(EEG.chanlocs)
+            EEG.chanlocs(iCh).urchan = iCh;
+        end
+
+    else
+        % continue
+    end
+
+    %%% Bad channel cache
+    badchanFile = '';
+    if opts.badchannels
+        badchanFile = fullfile(outDir, [fileID '_desc-' opts.desc '_badchans.mat']);
+    end
+
     %%% Run filter pipeline
     [EEG, KeepTime] = run.run_filter(EEG, ...
         'noteegchannels', opts.noteegchannels, ...
@@ -125,11 +183,24 @@ for ifile = 1:numel(filesEEG)
         'chunkLength',     opts.chunkLength, ...
         'plotResults',     opts.plotResults, ...
         'zeropatchseconds',   opts.zeropatchseconds, ...
-        'restorezeropatches', false);
+        'restorezeropatches', false, ...
+        'badchannels',        opts.badchannels, ...
+        'badchanfile',        badchanFile, ...
+        'refresh',            opts.refresh);
+
     if opts.plotResults
         nm = strrep(get(gcf, 'Name'), ' ', '_');
         print(gcf, fullfile(figDir, [fileID '_zapline_' nm '.png']), '-dpng', '-r150');
         pause(3); close(gcf);
+    end
+
+    %%% Bad channel figure
+    if opts.badchannels
+        badchanFigDir = fullfile(opts.figpath, 'badchans', subDir);
+        if ~exist(badchanFigDir, 'dir'), mkdir(badchanFigDir); end
+        gedai.plotBadChannels(EEG.etc.badchans.corr, EEG.etc.badchans.znoise, ...
+            EEG.urchanlocs, ...
+            fullfile(badchanFigDir, [fileID '_desc-' opts.desc '_BadChannelTopoplot.png']));
     end
 
     %%% Optional second Zapline pass
@@ -154,9 +225,16 @@ for ifile = 1:numel(filesEEG)
     %%% Put the all-zero patches back, so the saved file keeps its original length
     EEG = run.restore_zero_patches(EEG);
 
-    %%% Save BrainVision output
+    %%% Save output
+    %%% .set by default: BrainVision stores neither chanlocs nor urchanlocs, and both
+    %%% are needed downstream to interpolate the channels removed as bad.
     EEG.data = single(EEG.data);
-    pop_writebva(EEG, outFile, 'DataOrientation', 'MULTIPLEXED');
+    if strcmpi(opts.savefileext, '.set')
+        [~, outName, outExt] = fileparts(outFile);
+        pop_saveset(EEG, 'filename', [outName outExt], 'filepath', outDir);
+    else
+        pop_writebva(EEG, outFile, 'DataOrientation', 'MULTIPLEXED');
+    end
 
     %%% JSON timing sidecar
     [~, baseName] = fileparts(outFile);

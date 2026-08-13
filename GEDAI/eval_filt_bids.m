@@ -30,7 +30,7 @@ function failures = eval_filt_bids(BIDS, opts)
 %   ---
 %   tasklabel         BIDS task label(s) to query. Default: {'Sleep','sleep'}.
 %   acqlabel    BIDS acq label to query. Default: '125Hz'.
-%   noteegchannels    Channel indices to drop from raw EEG. Default: 257:264.
+%   noteegchannels    Channel indices to drop from raw EEG. Default: 257:300.
 %   net               EEG net identifier passed to chans1020. Default: 'EGI256'.
 %
 %   Subject filter
@@ -57,6 +57,7 @@ arguments
     %--- Input paths ---
     opts.filteredpath     char = ''
     opts.filtdesc         char = 'filt'
+    opts.filtfileext      char = '.set'
     opts.scoringpath      char = []
     opts.sfppath          char = BIDS.pth
 
@@ -134,7 +135,7 @@ for ifile = 1:numel(filesEEG)
     try
 
     %%% Resolve filtered file
-    filtFile = fullfile(opts.filteredpath, subDir, [fileID '_desc-' opts.filtdesc '_eeg.vhdr']);
+    filtFile = fullfile(opts.filteredpath, subDir, [fileID '_desc-' opts.filtdesc '_eeg' opts.filtfileext]);
     if ~isfile(filtFile)
         fprintf('[skip] filtered file not found: %s\n', filtFile)
         continue
@@ -182,7 +183,18 @@ for ifile = 1:numel(filesEEG)
     %%% Import filtered EEG
     fprintf('Importing filtered EEG ...\n')
     EEGfilt = eeg_import(filtFile);
-    EEGfilt = pop_select(EEGfilt, 'nochannel', intersect(1:EEGfilt.nbchan, opts.noteegchannels));    
+    EEGfilt = pop_select(EEGfilt, 'nochannel', intersect(1:EEGfilt.nbchan, opts.noteegchannels));
+
+    %%% Interpolate the channels run_filter_bids removed as bad, so the filtered
+    %%% recording is comparable to the raw one channel by channel. urchanlocs holds the
+    %%% montage as it was before the removal; eeg_interp restores its order too.
+    if isfield(EEGfilt, 'urchanlocs') && ~isempty(EEGfilt.urchanlocs) && ...
+            numel(EEGfilt.urchanlocs) > EEGfilt.nbchan
+        fprintf('Interpolating %d channel(s) removed as bad ...\n', ...
+            numel(EEGfilt.urchanlocs) - EEGfilt.nbchan)
+        EEGfilt = pop_interp(EEGfilt, EEGfilt.urchanlocs, 'spherical');
+    end
+
     EEGfilt.chanlocs   = chanlocs(1:EEGfilt.nbchan);
     EEGfilt.urchanlocs = EEGfilt.chanlocs;
 
