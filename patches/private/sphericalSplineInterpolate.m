@@ -1,4 +1,10 @@
 function [W,Gss,Gds,Hds]=sphericalSplineInterpolate(src,dest,lambda,order,type,tol)
+%%% Verbatim copy of eeglab/plugins/clean_rawdata/private/sphericalSplineInterpolate.m.
+%%% patches/clean_channels.m needs it, but the original lives in clean_rawdata/private
+%%% and private folders are only visible to functions in their parent folder. Kept
+%%% under patches/private so only patches/clean_channels.m can see it. Re-copy from
+%%% clean_rawdata if EEGLAB ever changes it.
+%
 %interpolate matrix for spherical interpolation
 %
 % W = sphericalSplineInterpolate(src,dest,lambda,order,type,tol)
