@@ -79,12 +79,14 @@ function EEG = cleanline_fast(EEG, varargin)
 %
 % See Also: cleanline(), rmlinesmovingwinc(), cleanLineNoise()
 
-% The only external dependency is chronux, which EEGLAB puts on the path when
-% it loads the cleanline plugin. This file itself can live anywhere on the path.
+% The only external dependency is chronux, in the cleanline plugin's external/
+% folder. The caller is expected to have run
+%   addpath(genpath('<path to cleanline plugin>'))
+% before the parpool is created, so the workers inherit it too.
 if ~exist('rmlinesmovingwinc', 'file')
     error('cleanline_fast:noChronux', ...
-        ['rmlinesmovingwinc() not found. Start EEGLAB first (it adds the ' ...
-         'cleanline plugin folder to the path), or addpath(genpath(<cleanline>)).']);
+        ['rmlinesmovingwinc() not found. Add the cleanline plugin to the path ' ...
+         'with addpath(genpath(''<path to cleanline plugin>'')).']);
 end
 
 g = struct('chanlist',  1:EEG.nbchan, ...
