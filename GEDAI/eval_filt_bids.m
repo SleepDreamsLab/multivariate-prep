@@ -41,6 +41,12 @@ function failures = eval_filt_bids(BIDS, opts)
 %   Epoch
 %   -----
 %   epochlength       Epoch duration in seconds. Default: 30.
+%
+%   Plots (forwarded to run.eval_clean)
+%   ------------------------------------
+%   All default true except PlotTopoBandPower, PlotEpochOverlay,
+%   PlotExponentByStage, PlotSlopesTimecourse, which default false.
+%   See run.eval_clean for what each plot shows.
 
 arguments
     BIDS
@@ -70,6 +76,18 @@ arguments
 
     %--- Epoch ---
     opts.epochlength (1,1) double = 30
+
+    %--- Plots (forwarded to run.eval_clean) ---
+    opts.PlotCharacteristics  (1,1) logical = true
+    opts.PlotPsdPerStage      (1,1) logical = true
+    opts.PlotPsdPerStageChans (1,1) logical = true
+    opts.PlotPsdOverview      (1,1) logical = true
+    opts.PlotTopoBandPower    (1,1) logical = false
+    opts.PlotTopoBandStage    (1,1) logical = true
+    opts.PlotEpochOverlay     (1,1) logical = false
+    opts.PlotTimefreq         (1,1) logical = true
+    opts.PlotExponentByStage  (1,1) logical = false
+    opts.PlotSlopesTimecourse (1,1) logical = false
 end
 
 if isempty(opts.filteredpath), opts.filteredpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
@@ -154,11 +172,7 @@ for ifile = 1:numel(filesEEG)
         sfpFile      = gedai.matchSfpFile(opts.sfppath, p.entities.sub, p.entities.ses);
         fprintf('SFP     → %s\n', sfpFile)
         chanlocs = register_fiducials(readlocs(sfpFile));
-%     catch
-%         elecfile = dir(fullfile(fileparts(rawFile), '*_electrodes.tsv'));
-%         chanlocs = bids_loadfile(chanlocs(elecfile(1).folder, elecfile(1).name))
-% %         chanlocs = readlocs(fullfile(pwd, chanlocs, [BIDS.description.Name '.tsv']), '');
-    end   
+    end
         
     %%% Extract channels
     EEGraw = pop_select(EEGraw, 'nochannel', intersect(1:EEGraw.nbchan, opts.noteegchannels));
@@ -172,11 +186,6 @@ for ifile = 1:numel(filesEEG)
     EEGfilt.chanlocs   = chanlocs(1:EEGfilt.nbchan);
     EEGfilt.urchanlocs = EEGfilt.chanlocs;
 
-%     %%% Trim scoring to match filtered EEG epoch count
-%     nEpochs = floor(EEGfilt.pnts / (opts.epochlength * EEGfilt.srate));
-%     while numel(scoringDigits) > nEpochs; scoringDigits(end) = []; end
-%     scoringDigits = gedai.killN1(scoringDigits);
-
     %%% Evaluate
     figDir = fullfile(opts.figpath, ['desc-' opts.filtdesc], subDir);
     if ~exist(figDir, 'dir'), mkdir(figDir); end
@@ -184,7 +193,17 @@ for ifile = 1:numel(filesEEG)
     run.eval_clean(EEGraw, EEGfilt, scoringDigits, ...
         'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
         'SavePath', fullfile(figDir, fileID), ...
-        'refresh', opts.refresh, 'net', opts.net);
+        'refresh', opts.refresh, 'net', opts.net, ...
+        'PlotCharacteristics', opts.PlotCharacteristics, ...
+        'PlotPsdPerStage', opts.PlotPsdPerStage, ...
+        'PlotPsdPerStageChans', opts.PlotPsdPerStageChans, ...
+        'PlotPsdOverview', opts.PlotPsdOverview, ...
+        'PlotTopoBandPower', opts.PlotTopoBandPower, ...
+        'PlotTopoBandStage', opts.PlotTopoBandStage, ...
+        'PlotEpochOverlay', opts.PlotEpochOverlay, ...
+        'PlotTimefreq', opts.PlotTimefreq, ...
+        'PlotExponentByStage', opts.PlotExponentByStage, ...
+        'PlotSlopesTimecourse', opts.PlotSlopesTimecourse);
     close all;
 
     catch ME
