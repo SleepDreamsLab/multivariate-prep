@@ -25,6 +25,10 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %                   removal and before Zapline. EEG.chanlocs must carry X/Y/Z. The
 %                   full montage stays available in EEG.urchanlocs, so the removed
 %                   channels can be interpolated back downstream  (default false)
+%   badchanavgref   average-reference the data for the bad channel detection only, and
+%                   undo it afterwards. Off, a single-electrode reference makes both
+%                   clean_channels criteria misfire on the ring of channels next to
+%                   that electrode - see the note at the detection block (default true)
 %   badchanfile     .mat cache path for the bad channel results; required when
 %                   badchannels is true
 %   refresh         recompute the bad channel cache even if it exists (default false)
@@ -84,6 +88,7 @@ arguments
     opts.zeropatchseconds   (1,1) double  = 5
     opts.restorezeropatches (1,1) logical = true
     opts.badchannels     (1,1) logical = false
+    opts.badchanavgref   (1,1) logical = true
     opts.badchanfile     char          = ''
     opts.refresh         (1,1) logical = false
 end
@@ -120,12 +125,24 @@ end
 %%% Bad channel detection and removal
 %%% Sits here, between the DC filter and Zapline, for two reasons. Detection needs the
 %%% line noise: the second criterion in clean_channels is the ratio of >50 Hz to <45 Hz
-%%% amplitude, which Zapline and CleanLine are about to flatten (the correlation
-%%% criterion runs on the <45 Hz band and is indifferent to the ordering). Removal
-%%% belongs here too: Zapline estimates its DSS spatial filter from the channel
-%%% covariance, so a channel dominated by line noise both biases how many components
-%%% are removed per chunk and gets its artefact smeared over the montage by the
-%%% projection. The full montage is preserved in EEG.urchanlocs for interpolation.
+%%% amplitude, which Zapline and CleanLine are about to flatten. Removal belongs here
+%%% too: Zapline estimates its DSS spatial filter from the channel covariance, so a
+%%% channel dominated by line noise both biases how many components are removed per
+%%% chunk and gets its artefact smeared over the montage by the projection. The full
+%%% montage is preserved in EEG.urchanlocs for interpolation.
+%%%
+%%% Detection runs on an average-referenced copy (see badchanavgref). Both criteria in
+%%% clean_channels are ratios of unreconstructible noise to reconstructible signal, and
+%%% referencing to a single electrode drives the denominator towards zero for the ring
+%%% of channels next to it: subtracting Cz cancels the spatially smooth field (brain
+%%% signal) but not per-electrode line pickup, which is impedance- and lead-driven and
+%%% therefore rough. Measured on sub-drop0001/ses-t1, that ring went from a median
+%%% RANSAC correlation of 0.99 post-Zapline to 0.73 pre-Zapline while every other
+%%% channel stayed put - i.e. the vertex electrodes, the most valuable ones for sleep,
+%%% were being flagged for the reference geometry rather than for being broken. The
+%%% 45-50 Hz lowpass clean_channels applies before correlating only rejects ~31 dB at
+%%% 50 Hz, so ~3% of the line amplitude reaches the correlation band; that is nothing
+%%% against a normal channel's EEG and everything against a near-reference channel's.
 if opts.badchannels
     if isempty(opts.badchanfile)
         error('run_filter:noBadChanFile', ...
@@ -145,9 +162,25 @@ if opts.badchannels
     end
 
     D = tic; fprintf('\nBad channel detection ...\n')
+
+    %%% Average-reference for detection only, then undo it: the data handed to Zapline
+    %%% and written out keeps the reference it came in with.
+    avgRef = [];
+    if opts.badchanavgref
+        fprintf('Average-referencing for detection ...\n')
+        avgRef   = sum(EEG.data, 1) / (size(EEG.data, 1) + 1);   % +1: implicit reference channel
+        EEG.data = EEG.data - avgRef;
+    end
+
     [removed_channels, corrs, znoise] = smartcache( ...
         @() clean_channels(EEG, 0.7, 4, [], 0.5, 25), ...
         opts.badchanfile, opts.refresh, {'', 'removed_channels', 'corr', 'znoise'});
+
+    if ~isempty(avgRef)
+        EEG.data = EEG.data + avgRef;
+        clear avgRef
+    end
+
     EEG.etc.badchans = struct('mask', removed_channels, 'corr', corrs, 'znoise', znoise);
     KeepTime.BadChannelDetection = toc(D);
 

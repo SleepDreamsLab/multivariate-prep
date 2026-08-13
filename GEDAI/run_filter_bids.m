@@ -34,6 +34,9 @@ function failures = run_filter_bids(BIDS, opts)
 %                   there. The mask is cached as
 %                   <fileID>_desc-<desc>_badchans.mat next to the filtered file and
 %                   read back by run_gedai_bids for the leadfield  (default true)
+%   badchanavgref   average-reference the data for the detection only and undo it
+%                   afterwards, so a single-electrode reference cannot make the ring
+%                   of channels around it look bad              (default true)
 %   sfppath         path passed to the SFP resolver; clean_channels needs channel
 %                   locations                                   (default BIDS root)
 %   savefileext     '.set' (EEGLAB) or anything else for BrainVision (default '.set')
@@ -69,6 +72,7 @@ arguments
 
     %--- Bad channels ---
     opts.badchannels      (1,1) logical  = true
+    opts.badchanavgref    (1,1) logical  = true
     opts.sfppath          char           = BIDS.pth
 
     %--- Subject filter ---
@@ -185,6 +189,7 @@ for ifile = 1:numel(filesEEG)
         'zeropatchseconds',   opts.zeropatchseconds, ...
         'restorezeropatches', false, ...
         'badchannels',        opts.badchannels, ...
+        'badchanavgref',      opts.badchanavgref, ...
         'badchanfile',        badchanFile, ...
         'refresh',            opts.refresh);
 
