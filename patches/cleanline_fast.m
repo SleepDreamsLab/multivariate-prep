@@ -24,6 +24,11 @@ function EEG = cleanline_fast(EEG, varargin)
 %   winstep     sliding window step (sec)                (1)
 %   tau         overlap smoothing factor                 (100)
 %   blocksize   channels per parfor block                (4)
+%   perround    blocks dispatched per round; 0 = one per worker. Lower it if a
+%               round does not fit in RAM: a round holds
+%               2 * perround * blocksize * nsamples * 8 bytes on the client,
+%               plus about three times a block on each worker.           (0)
+%   verbose     report each block of channels as it finishes             (true)
 %   sigtest     only subtract a line where it is
 %               significant (see below)                  (false)
 %   scanbw      width (Hz) of the band searched around each linefreq for the
@@ -100,7 +105,9 @@ g = struct('chanlist',  1:EEG.nbchan, ...
            'sigtest',   false, ...
            'pad',        0, ...
            'scanbw',     0, ...
-           'iterations', 1);
+           'iterations', 1, ...
+           'perround',   0, ...
+           'verbose',    true);
 for k = 1:2:numel(varargin)
     if ~isfield(g, lower(varargin{k}))
         error('cleanline_fast:badOption', 'Unknown option ''%s''', varargin{k});
@@ -148,18 +155,52 @@ blocks = arrayfun(@(i) chans(i:min(i + g.blocksize - 1, numel(chans))), ...
 % sliced copies parfor needs would add as much again; this way only one round
 % is resident. Trials are concatenated by the (chan, :) indexing, which is how
 % the legacy loop treats them too.
+% Size the rounds to the pool -- and make sure the pool exists first. gcp with
+% 'nocreate' returns empty when none is running yet, which would set perRound to
+% 1 and feed the workers one block at a time while the rest idle; parfor would
+% then start the pool anyway, so the run looks parallel and is not.
 pool = gcp('nocreate');
+if isempty(pool)
+    try
+        pool = parpool;
+    catch
+        pool = [];      % no Parallel Computing Toolbox: parfor runs serially
+    end
+end
 if isempty(pool)
     perRound = 1;
 else
     perRound = pool.NumWorkers;
 end
+if g.perround > 0
+    perRound = g.perround;      % lower this if a round does not fit in RAM
+end
 
 nb = numel(blocks);
+if g.verbose
+    fprintf('cleanline_fast: %d channels, %d blocks of %d, %d per round\n', ...
+        numel(chans), nb, g.blocksize, perRound);
+end
+tStart = tic;
+
 for r = 1:perRound:nb
-    rb  = r:min(r + perRound - 1, nb);
-    in  = cellfun(@(b) double(EEG.data(b, :)).', blocks(rb), 'UniformOutput', false);
+    rb = r:min(r + perRound - 1, nb);
+
+    % One strided gather per round rather than one per block: EEG.data is
+    % channels-by-samples, so pulling a few rows walks the whole array.
+    chunk = double(EEG.data([blocks{rb}], :)).';
+    in    = cell(1, numel(rb));
+    c0    = 0;
+    for j = 1:numel(rb)
+        nc    = numel(blocks{rb(j)});
+        in{j} = chunk(:, c0 + 1:c0 + nc);
+        c0    = c0 + nc;
+    end
+    clear chunk;
     out = cell(1, numel(rb));
+
+    bl   = blocks(rb);          % sliced, so the workers can name their channels
+    verb = g.verbose;
 
     parfor j = 1:numel(rb)
         x = in{j};
@@ -179,12 +220,34 @@ for r = 1:perRound:nb
             datac(L:size(x, 1), :) = x(L:end, :);
         end
         out{j} = datac;
+        if verb
+            % Channels in a block are fitted together, so they finish together.
+            % Worker output is forwarded to the client, but the order across
+            % workers is whatever finishes first.
+            fprintf('Cleaned Chan %s\n', strtrim(sprintf('%d ', bl{j})));
+        end
     end
 
     for j = 1:numel(rb)
         EEG.data(blocks{rb(j)}, :) = cast(out{j}.', dataclass);
     end
     clear in out;
+
+    if g.verbose
+        el = toc(tStart);
+        fprintf('  %3d/%d blocks | %5.1f min elapsed | ~%4.1f min left\n', ...
+            rb(end), nb, el/60, el/60*(nb - rb(end))/rb(end));
+    end
+end
+
+if g.verbose
+    tTotal = toc(tStart);
+    if tTotal < 90
+        fprintf('cleanline_fast: %d channels done in %.1f s\n', numel(chans), tTotal);
+    else
+        fprintf('cleanline_fast: %d channels done in %.1f min (%.0f s)\n', ...
+            numel(chans), tTotal/60, tTotal);
+    end
 end
 
 if ~isempty(EEG.icaweights)
