@@ -229,27 +229,32 @@ for ifile = 1:numel(filesEEG)
 
     %%% GEDAI runs
     for iRun = 1:numel(opts.runs)
-        r        = opts.runs{iRun};
-        savename = gedai.buildSaveName(r, EEG.srate);
+        r = opts.runs{iRun};
 
         switch opts.runmode
             case 'StageSpecific'
-                savename        = [opts.prefix 'StageSpecific_' savename];
                 stageLogic      = {[-2], [-3], [0], [1]};
                 refCOV_perStage = {lfCOV, lfCOV, lfCOV, lfCOV};
             case 'StateWise'
-                savename        = [opts.prefix 'StateWise_' savename];
                 stageLogic      = {[-2, -3], [0, 1]};
                 refCOV_perStage = {lfCOV, lfCOV};
             case 'WholeNight'
-                savename        = [opts.prefix 'WholeNight_' savename];
-                stageLogic      = {[-3:1]};
+                % N1 (-1) is deliberately excluded: killN1 (called earlier) reassigns every
+                % N1 epoch to a neighbouring stage, so -1 never appears in scoringDigits_NoN1.
+                % Using the -3:1 range here would still ask the mode dict for a -1 entry.
+                stageLogic      = {[-3, -2, 0, 1]};
                 refCOV_perStage = {lfCOV};
         end
 
         %%% Build per-stage GEDAIMode / GEDAIModeBB from stage-keyed dicts
-        GEDAIMode_perStage   = cellfun(@(s) resolveStageMode(s, r.GEDAIMode_dict,   r.GEDAIMode),   stageLogic, 'uni', 0);
-        GEDAIModeBB_perStage = cellfun(@(s) resolveStageMode(s, r.GEDAIModeBB_dict, r.GEDAIModeBB), stageLogic, 'uni', 0);
+        GEDAIMode_perStage   = cellfun(@(s) resolveStageMode(s, r.GEDAIMode_dict),   stageLogic, 'uni', 0);
+        GEDAIModeBB_perStage = cellfun(@(s) resolveStageMode(s, r.GEDAIModeBB_dict), stageLogic, 'uni', 0);
+
+        %%% Run name: built from the resolved modes, and from the full stage list
+        %%% before recording-specific stages are dropped, so it describes the
+        %%% configuration and stays comparable across recordings
+        savename = [opts.prefix opts.runmode '_' ...
+            gedai.buildSaveName(r, EEG.srate, GEDAIMode_perStage, GEDAIModeBB_perStage)];
 
         %%% Drop stage groups absent from scoring
         presentStages      = unique(scoringDigits_NoN1);
@@ -350,23 +355,28 @@ end
 end % run_gedai_bids
 
 % -------------------------------------------------------------------------
-function mode = resolveStageMode(stages, dict, fallback)
-% Resolve mode for a group of stage digits from a dictionary with scalar fallback.
-% Errors if stages in the same group map to different modes.
-    modes = arrayfun(@(s) lookupMode(s, dict, fallback), stages, 'uni', 0);
-    uniqueModes = unique(modes);
-    if numel(uniqueModes) > 1
-        error('run_gedai_bids:inconsistentMode', ...
-            'Stages [%s] map to different mode values (%s) - assign the same mode to all stages in a group.', ...
-            num2str(stages(:)', '%d '), strjoin(uniqueModes, ', '));
+function mode = resolveStageMode(stages, dict)
+% Resolve the cleaning mode for a group of stage digits from a stage-keyed dictionary.
+% A stage group is cleaned in a single pass, so one strength has to cover all of it:
+% stages within a group that disagree are an error, not something to silently pick from.
+    if ~isConfigured(dict)
+        error('run_gedai_bids:unconfiguredModeDict', ...
+            'Mode dictionary is unconfigured - it must define a mode for every stage.');
     end
-    mode = uniqueModes{1};
-end
 
-function mode = lookupMode(stage, dict, fallback)
-    if isConfigured(dict) && isKey(dict, stage)
-        mode = char(dict(stage));
-    else
-        mode = fallback;
+    missing = stages(~isKey(dict, stages));
+    if ~isempty(missing)
+        error('run_gedai_bids:missingStageMode', ...
+            'No mode configured for stage(s) [%s] - add them to the mode dictionary.', ...
+            num2str(missing(:)', '%d '));
     end
+
+    modes = unique(string(dict(stages)));
+    if numel(modes) > 1
+        error('run_gedai_bids:inconsistentMode', ...
+            ['Stages [%s] are cleaned together but map to different modes (%s) - ' ...
+             'assign the same mode to all stages in a group.'], ...
+            num2str(stages(:)', '%d '), strjoin(modes, ', '));
+    end
+    mode = char(modes);
 end
