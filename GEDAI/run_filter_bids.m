@@ -27,6 +27,7 @@ function failures = run_filter_bids(BIDS, opts)
 %                   this many seconds before filtering, restore them before saving;
 %                   0 = skip                                    (default 5)
 %   subjectfilter   cell array of subject ID strings; {} = all subjects
+%   sessionfilter   cell array of session ID strings; {} = all sessions
 
 arguments
     BIDS
@@ -56,6 +57,7 @@ arguments
 
     %--- Subject filter ---
     opts.subjectfilter    cell            = {}
+    opts.sessionfilter    cell            = {}
 end
 
 if isempty(opts.savepath), opts.savepath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
@@ -77,6 +79,11 @@ for ifile = 1:numel(filesEEG)
 
     %%% Subject filter
     if ~isempty(opts.subjectfilter) && ~contains(fileID, opts.subjectfilter)
+        continue
+    end
+
+    %%% Session filter
+    if ~isempty(opts.sessionfilter) && ~contains(fileID, opts.sessionfilter)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)

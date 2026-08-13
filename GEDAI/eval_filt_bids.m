@@ -36,6 +36,7 @@ function failures = eval_filt_bids(BIDS, opts)
 %   Subject filter
 %   --------------
 %   subjectfilter     Cell array of subject ID strings; {} = all subjects.
+%   sessionfilter     Cell array of session ID strings; {} = all sessions.
 %
 %   Epoch
 %   -----
@@ -65,6 +66,7 @@ arguments
 
     %--- Subject filter ---
     opts.subjectfilter    cell          = {}
+    opts.sessionfilter    cell          = {}
 
     %--- Epoch ---
     opts.epochlength (1,1) double = 30
@@ -95,6 +97,11 @@ for ifile = 1:numel(filesEEG)
 
     %%% Subject filter
     if ~isempty(opts.subjectfilter) && ~contains(fileID, opts.subjectfilter)
+        continue
+    end
+
+    %%% Session filter
+    if ~isempty(opts.sessionfilter) && ~contains(fileID, opts.sessionfilter)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
