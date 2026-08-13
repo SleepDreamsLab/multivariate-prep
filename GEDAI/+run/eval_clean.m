@@ -81,27 +81,28 @@ EEGclean    = chans1020(EEGclean, false, 'add_eog', 0, 'net', opts.net);
 EEGraw      = chans1020(EEGraw, false, 'add_eog', 0, 'net', opts.net);
 
 %%% --- Compute Welch power spectra (cached only if opts.cachepower) ---
+%%% Power matrices are chans x freqs x epochs.
 fprintf('gedai.eval_clean: computing Welch power (clean) ...\n');
 if opts.cachepower
     [PwrClean, FreqsClean] = smartcache( ...
-        @() run.run_pwelch(EEGclean, opts.EpochLength, ...
+        @() run.pwelch_fast(EEGclean, opts.EpochLength, ...
             opts.WelchWindow, opts.WelchOverlap), ...
                 fullfile([opts.SavePath '_' 'PSDclean' '.mat']), ...
                 opts.refresh , {'Power', 'Freqs'});
 else
-    [PwrClean, FreqsClean] = run.run_pwelch(EEGclean, opts.EpochLength, ...
+    [PwrClean, FreqsClean] = run.pwelch_fast(EEGclean, opts.EpochLength, ...
         opts.WelchWindow, opts.WelchOverlap);
 end
 
 fprintf('gedai.eval_clean: computing Welch power (raw) ...\n');
 if opts.cachepower
     [PwrRaw, FreqsRaw] = smartcache( ...
-        @() run.run_pwelch(EEGraw, opts.EpochLength, ...
+        @() run.pwelch_fast(EEGraw, opts.EpochLength, ...
             opts.WelchWindow, opts.WelchOverlap), ...
                 fullfile([opts.SavePath '_' 'PSDraw' '.mat']), ...
                 opts.refresh , {'Power', 'Freqs'});
 else
-    [PwrRaw, FreqsRaw] = run.run_pwelch(EEGraw, opts.EpochLength, ...
+    [PwrRaw, FreqsRaw] = run.pwelch_fast(EEGraw, opts.EpochLength, ...
         opts.WelchWindow, opts.WelchOverlap);
 end
 
@@ -113,9 +114,9 @@ if isempty(FzIdx)
     FzIdx = 1;
 end
 
-%%% --- Guard epoch-count mismatch from run_pwelch rounding ---
+%%% --- Guard epoch-count mismatch from pwelch_fast rounding ---
 stageScoring = StageScoring(:)';
-if size(PwrClean, 2) ~= numel(stageScoring)
+if size(PwrClean, 3) ~= numel(stageScoring)
     warning('Sleep scoring vector length does not match # epochs');
 end
 
@@ -169,9 +170,14 @@ end
 needFooof = opts.PlotTimefreq || opts.PlotExponentByStage || opts.PlotSlopesTimecourse;
 if needFooof
     %%% --- Pre-smooth power spectra for FOOOF (done once, reused across frequency ranges) ---
-    powerRawSmooth   = oscip.smooth_spectrum_median(PwrRaw(FzIdx, :, :),   FreqsRaw,   opts.FooofMedianSmooth);
+    %%% oscip/FOOOF expect chans x epochs x freqs, so permute out of the
+    %%% chans x freqs x epochs layout used everywhere else here.
+    pwrRawFz   = permute(PwrRaw(FzIdx, :, :),   [1 3 2]);
+    pwrCleanFz = permute(PwrClean(FzIdx, :, :), [1 3 2]);
+
+    powerRawSmooth   = oscip.smooth_spectrum_median(pwrRawFz,   FreqsRaw,   opts.FooofMedianSmooth);
     powerRawSmooth   = oscip.smooth_spectrum(powerRawSmooth,   FreqsRaw,   opts.FooofMeanSmooth);
-    powerCleanSmooth = oscip.smooth_spectrum_median(PwrClean(FzIdx, :, :), FreqsClean, opts.FooofMedianSmooth);
+    powerCleanSmooth = oscip.smooth_spectrum_median(pwrCleanFz, FreqsClean, opts.FooofMedianSmooth);
     powerCleanSmooth = oscip.smooth_spectrum(powerCleanSmooth, FreqsClean, opts.FooofMeanSmooth);
 
     %%% --- FOOOF loop over frequency ranges ---

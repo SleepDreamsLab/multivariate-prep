@@ -6,8 +6,8 @@ function psd_overview(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, Chan
 %
 %   Inputs
 %   ------
-%   PwrClean     : chans x epochs x freqs — GEDAI-cleaned power.
-%   PwrRaw       : chans x epochs x freqs — raw power.
+%   PwrClean     : chans x freqs x epochs — GEDAI-cleaned power.
+%   PwrRaw       : chans x freqs x epochs — raw power.
 %   FreqsClean   : frequency vector for PwrClean (Hz).
 %   FreqsRaw     : frequency vector for PwrRaw (Hz).
 %   StageScoring : per-epoch sleep-stage codes.
@@ -60,7 +60,7 @@ for iScale = 1:nScales
             d    = uniqueStages(iStage);
             mask = StageScoring == d;
             if ~any(mask), continue; end
-            meanPwr = squeeze(mean(log10(Pwr(ChanIdx, mask, fMask)), 2));
+            meanPwr = squeeze(mean(log10(Pwr(ChanIdx, fMask, mask)), 3));
             plot(Freqs(fMask), meanPwr, '-', 'Color', stage_color(d), ...
                 'LineWidth', 1.2, 'DisplayName', stage_name(d));
         end

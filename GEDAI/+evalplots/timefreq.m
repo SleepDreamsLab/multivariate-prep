@@ -6,8 +6,8 @@ function timefreq(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, ChanIdx,
 %
 %   Inputs
 %   ------
-%   PwrClean     : chans x epochs x freqs — GEDAI-cleaned power.
-%   PwrRaw       : chans x epochs x freqs — raw power.
+%   PwrClean     : chans x freqs x epochs — GEDAI-cleaned power.
+%   PwrRaw       : chans x freqs x epochs — raw power.
 %   FreqsClean   : frequency vector for PwrClean (Hz).
 %   FreqsRaw     : frequency vector for PwrRaw (Hz).
 %   StageScoring : per-epoch sleep-stage codes (used for hypnogram strip).
@@ -40,14 +40,14 @@ arguments
     opts.SavePath                = ''
 end
 
-nEpochs    = size(PwrRaw, 2);
+nEpochs    = size(PwrRaw, 3);
 fMaskRaw   = FreqsRaw   >= opts.FreqLim(1) & FreqsRaw   <= opts.FreqLim(2);
 fMaskClean = FreqsClean >= opts.FreqLim(1) & FreqsClean <= opts.FreqLim(2);
 T_min      = (0:nEpochs-1) * opts.EpochLength / 60;
 xLim       = [0  T_min(end) + opts.EpochLength/60];
 
-P_raw_log   = log10(squeeze(PwrRaw(ChanIdx,   :, fMaskRaw))'   + eps);   % freqs × epochs
-P_clean_log = log10(squeeze(PwrClean(ChanIdx, :, fMaskClean))' + eps);
+P_raw_log   = log10(squeeze(PwrRaw(ChanIdx,   fMaskRaw,   :)) + eps);   % freqs × epochs
+P_clean_log = log10(squeeze(PwrClean(ChanIdx, fMaskClean, :)) + eps);
 
 scoringTF = StageScoring(:)';
 if numel(scoringTF) > nEpochs, scoringTF = scoringTF(1:nEpochs); end
@@ -102,10 +102,10 @@ hold on;
 colorRaw   = [0.65 0.65 0.65];
 colorClean = [0.08 0.22 0.55];
 if ~isempty(expRaw)
-    plot(T_min(1:numel(expRaw)),   expRaw,   '-', 'Color', colorRaw,   'LineWidth', 1.2, 'DisplayName', 'before GEDAI');
+    plot(T_min(1:numel(expRaw)),   expRaw,   '-', 'Color', colorRaw,   'LineWidth', 1.2, 'DisplayName', 'before');
 end
 if ~isempty(expClean)
-    plot(T_min(1:numel(expClean)), expClean, '-', 'Color', colorClean, 'LineWidth', 1.5, 'DisplayName', 'after GEDAI');
+    plot(T_min(1:numel(expClean)), expClean, '-', 'Color', colorClean, 'LineWidth', 1.5, 'DisplayName', 'after');
 end
 xlim(xLim);
 ylabel('1/f exp.', 'FontSize', 9);

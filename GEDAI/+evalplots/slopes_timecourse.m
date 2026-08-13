@@ -75,8 +75,8 @@ for iRange = 1:nRanges
 
     ax = nexttile;
     hold on;
-    plot(T_min(1:numel(raw)),   raw,   '-', 'Color', colorRaw,   'LineWidth', 1.2, 'DisplayName', 'before GEDAI');
-    plot(T_min(1:numel(clean)), clean, '-', 'Color', colorClean, 'LineWidth', 1.5, 'DisplayName', 'after GEDAI');
+    plot(T_min(1:numel(raw)),   raw,   '-', 'Color', colorRaw,   'LineWidth', 1.2, 'DisplayName', 'before');
+    plot(T_min(1:numel(clean)), clean, '-', 'Color', colorClean, 'LineWidth', 1.5, 'DisplayName', 'after');
     xlim(xLim);
     ylabel('1/f exponent', 'FontSize', 9);
     title(frLabel, 'FontSize', 9, 'FontWeight', 'normal');

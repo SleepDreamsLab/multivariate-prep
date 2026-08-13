@@ -6,8 +6,8 @@ function psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, Cha
 %
 %   Inputs
 %   ------
-%   PwrClean     : chans x epochs x freqs — GEDAI-cleaned power.
-%   PwrRaw       : chans x epochs x freqs — raw power.
+%   PwrClean     : chans x freqs x epochs — GEDAI-cleaned power.
+%   PwrRaw       : chans x freqs x epochs — raw power.
 %   FreqsClean   : frequency vector for PwrClean (Hz).
 %   FreqsRaw     : frequency vector for PwrRaw (Hz).
 %   StageScoring : per-epoch sleep-stage codes.
@@ -52,23 +52,23 @@ for iScale = 1:nScales
         nexttile; hold on;
         if ~any(mask), continue; end
 
-        meanClean = squeeze(mean(log10(PwrClean(ChanIdx, mask, fMaskClean)), 2));
-        meanRaw   = squeeze(mean(log10(PwrRaw(ChanIdx,   mask, fMaskRaw)),   2));
+        meanClean = squeeze(mean(log10(PwrClean(ChanIdx, fMaskClean, mask)), 3));
+        meanRaw   = squeeze(mean(log10(PwrRaw(ChanIdx,   fMaskRaw,   mask)), 3));
 
-        % Individual epoch lines — plotted first so means sit on top
-        epochsRaw   = squeeze(log10(PwrRaw(ChanIdx,   mask, fMaskRaw)));
-        epochsClean = squeeze(log10(PwrClean(ChanIdx, mask, fMaskClean)));
-        if isvector(epochsRaw),   epochsRaw   = epochsRaw(:)';   end
-        if isvector(epochsClean), epochsClean = epochsClean(:)'; end
-        plot(FreqsRaw(fMaskRaw),     epochsRaw',   '-', 'Color', [0.75 0.75 0.75 0.3], ...
+        % Individual epoch lines (freqs x epochs) — plotted first so means sit on top
+        epochsRaw   = squeeze(log10(PwrRaw(ChanIdx,   fMaskRaw,   mask)));
+        epochsClean = squeeze(log10(PwrClean(ChanIdx, fMaskClean, mask)));
+        if isvector(epochsRaw),   epochsRaw   = epochsRaw(:);   end
+        if isvector(epochsClean), epochsClean = epochsClean(:); end
+        plot(FreqsRaw(fMaskRaw),     epochsRaw,   '-', 'Color', [0.75 0.75 0.75 0.3], ...
             'LineWidth', 0.4, 'HandleVisibility', 'off');
-        plot(FreqsClean(fMaskClean), epochsClean', '-', 'Color', [stage_color(d), 0.3], ...
+        plot(FreqsClean(fMaskClean), epochsClean, '-', 'Color', [stage_color(d), 0.3], ...
             'LineWidth', 0.4, 'HandleVisibility', 'off');
 
         plot(FreqsRaw(fMaskRaw),     meanRaw,   '-', 'Color', [0.45 0.45 0.45], ...
-            'LineWidth', 1.6, 'DisplayName', 'before GEDAI');
+            'LineWidth', 1.6, 'DisplayName', 'before');
         plot(FreqsClean(fMaskClean), meanClean, '-',  'Color', 'k', ...
-            'LineWidth', 2.0, 'DisplayName', 'after GEDAI');
+            'LineWidth', 2.0, 'DisplayName', 'after');
 
         if iStage == 1
             ylabel('Power (log_{10} \muV^2/Hz)', 'FontSize', 10);

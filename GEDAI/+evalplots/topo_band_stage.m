@@ -7,7 +7,7 @@ function topo_band_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, C
 %   from clean data across all stages) and the same map as topo_band_power.
 
 arguments
-    PwrClean                    % chans × epochs × freqs
+    PwrClean                    % chans × freqs × epochs
     PwrRaw
     FreqsClean   {mustBeVector}
     FreqsRaw     {mustBeVector}
@@ -58,11 +58,11 @@ for iBand = 1:nBands
         if ~any(sMask), continue; end
         if any(fMaskRaw)
             rawPwr(:,iBand,iStage)   = squeeze(mean(mean( ...
-                log10(PwrRaw(:,sMask,fMaskRaw)   + eps), 3), 2));
+                log10(PwrRaw(:,fMaskRaw,sMask)   + eps), 2), 3));
         end
         if any(fMaskClean)
             cleanPwr(:,iBand,iStage) = squeeze(mean(mean( ...
-                log10(PwrClean(:,sMask,fMaskClean) + eps), 3), 2));
+                log10(PwrClean(:,fMaskClean,sMask) + eps), 2), 3));
         end
     end
 end

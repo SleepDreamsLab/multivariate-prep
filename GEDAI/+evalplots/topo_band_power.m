@@ -6,8 +6,8 @@ function topo_band_power(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScoring, C
 %
 %   Inputs
 %   ------
-%   PwrClean     : chans x epochs x freqs.
-%   PwrRaw       : chans x epochs x freqs.
+%   PwrClean     : chans x freqs x epochs.
+%   PwrRaw       : chans x freqs x epochs.
 %   Freqs        : frequency vector (Hz).
 %   StageScoring : per-epoch sleep-stage codes.
 %   Chanlocs     : EEGLAB chanlocs struct (already position-corrected).
@@ -68,11 +68,11 @@ for iBand = 1:nBands
 
     if any(fBandMaskRaw)
         rawBands(:, iBand)   = squeeze(mean(mean( ...
-            log10(PwrRaw(:,   stageMask, fBandMaskRaw)   + eps), 3), 2));
+            log10(PwrRaw(:,   fBandMaskRaw,   stageMask) + eps), 2), 3));
     end
     if any(fBandMaskClean)
         cleanBands(:, iBand) = squeeze(mean(mean( ...
-            log10(PwrClean(:, stageMask, fBandMaskClean) + eps), 3), 2));
+            log10(PwrClean(:, fBandMaskClean, stageMask) + eps), 2), 3));
     end
 end
 

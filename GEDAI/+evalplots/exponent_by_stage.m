@@ -168,8 +168,8 @@ end
 
 % Legend (first tile only — drawn via invisible patches for alpha encoding)
 patch(nan, nan, [0.55 0.55 0.55], 'FaceAlpha', 0.30, 'EdgeColor', 'none', ...
-    'DisplayName', 'before GEDAI');
+    'DisplayName', 'before');
 patch(nan, nan, [0.55 0.55 0.55], 'FaceAlpha', 0.68, 'EdgeColor', 'none', ...
-    'DisplayName', 'after GEDAI');
+    'DisplayName', 'after');
 legend(ax, 'Location', 'best', 'FontSize', 9, 'Box', 'off');
 end

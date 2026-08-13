@@ -4,8 +4,8 @@ function psd_per_stage_chans(PwrClean, PwrRaw, FreqsClean, FreqsRaw, StageScorin
 %
 %   Inputs
 %   ------
-%   PwrClean     : chans x epochs x freqs — GEDAI-cleaned power.
-%   PwrRaw       : chans x epochs x freqs — raw power.
+%   PwrClean     : chans x freqs x epochs — GEDAI-cleaned power.
+%   PwrRaw       : chans x freqs x epochs — raw power.
 %   FreqsClean   : frequency vector for PwrClean (Hz).
 %   FreqsRaw     : frequency vector for PwrRaw (Hz).
 %   StageScoring : per-epoch sleep-stage codes.
@@ -49,8 +49,8 @@ for iScale = 1:nScales
         if ~any(mask), continue; end
 
         % Per-channel epoch-averages: [nChans x nFreqSel]
-        chanMeansRaw   = squeeze(mean(log10(PwrRaw(:,   mask, fMaskRaw)   + eps), 2));
-        chanMeansClean = squeeze(mean(log10(PwrClean(:, mask, fMaskClean) + eps), 2));
+        chanMeansRaw   = squeeze(mean(log10(PwrRaw(:,   fMaskRaw,   mask) + eps), 3));
+        chanMeansClean = squeeze(mean(log10(PwrClean(:, fMaskClean, mask) + eps), 3));
         if isvector(chanMeansRaw),   chanMeansRaw   = chanMeansRaw(:)';   end
         if isvector(chanMeansClean), chanMeansClean = chanMeansClean(:)'; end
 
@@ -66,9 +66,9 @@ for iScale = 1:nScales
 
         % Grand mean (thick)
         plot(FreqsRaw(fMaskRaw),     grandMeanRaw,   '-', 'Color', [0.45 0.45 0.45], ...
-            'LineWidth', 1.6, 'DisplayName', 'before GEDAI');
+            'LineWidth', 1.6, 'DisplayName', 'before');
         plot(FreqsClean(fMaskClean), grandMeanClean, '-', 'Color', 'k', ...
-            'LineWidth', 2.0, 'DisplayName', 'after GEDAI');
+            'LineWidth', 2.0, 'DisplayName', 'after');
 
         if iStage == 1
             ylabel('Power (log_{10} \muV^2/Hz)', 'FontSize', 10);
