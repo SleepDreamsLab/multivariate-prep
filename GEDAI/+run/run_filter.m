@@ -13,6 +13,12 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %   targetsrate     resample to this rate in Hz; 0 = skip      (default 125)
 %   removeDC        apply DC-removal filter                    (default true)
 %   zapline        apply Zapline-plus line-noise removal      (default true)
+%   noiseCompDetectSigma  sigma of the per-chunk outlier detector that picks how many
+%                   DSS components to remove. Higher = fewer components = gentler.
+%                   5 is the upper bound of Zapline-plus' own adaptive range (default 5)
+%   adaptiveSigma   let Zapline-plus tune noiseCompDetectSigma by reprocessing the whole
+%                   recording once per 0.25 step. Off: on these data it always walks to
+%                   the 5.0 ceiling, so 9 passes are computed and 8 discarded (default false)
 %   KeepTime        struct of prior timings to merge into the output (default [])
 %   cleanline       apply CleanLine after Zapline               (default true)
 %   JsonFile        full path for a JSON sidecar with processing timings;
@@ -35,10 +41,12 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 % (100 Hz) were removed jointly. To accommodate non-stationarity of the line artifact across the 
 % [8-h] recordings, data were processed in fixed 300-s chunks, with the individual noise peak 
 % re-estimated within each chunk (search window 50 ± 3 Hz) and the number of removed components 
-% determined adaptively per chunk by iterative outlier detection on the DSS component scores 
-% (minimum 1 component). The detection threshold was adapted iteratively until the cleaned 
-% spectrum showed neither residual noise above nor over-correction below the surrounding-noise 
-% criterion. Residual artifacts at 50 and 100 Hz were subsequently attenuated using 
+% determined adaptively per chunk by iterative outlier detection on the DSS component scores
+% (minimum 1 component). The outlier-detection threshold was held fixed at sigma = 5, the upper
+% bound of the algorithm's adaptive range and therefore its most conservative setting; the
+% iterative threshold adaptation was disabled because it converged to this bound on every pilot
+% recording, so a fixed threshold yields identical output while also equalising cleaning
+% strength across recordings. Residual artifacts at 50 and 100 Hz were subsequently attenuated using
 % a custom parallelised reimplementation CleanLine (Mullen, 2012; EEGLAB), leveraging 
 % multi-taper sinusoidal regression, .
 % Within 4-s windows advanced in 2-s steps, the Thomson F-test for a deterministic sinusoid 
@@ -63,6 +71,8 @@ arguments
     opts.adaptiveNremove (1,1) logical = true
     opts.fixedNremove    (1,1) double  = 1
     opts.chunkLength     (1,1) double  = 300
+    opts.noiseCompDetectSigma (1,1) double  = 5
+    opts.adaptiveSigma   (1,1) logical = false
     opts.plotResults     (1,1) logical = true
     opts.zeropatchseconds   (1,1) double  = 5
     opts.restorezeropatches (1,1) logical = true
@@ -106,6 +116,8 @@ if opts.zapline
         'adaptiveNremove', opts.adaptiveNremove, ...
         'fixedNremove',    opts.fixedNremove, ...
         'chunkLength',     opts.chunkLength, ...
+        'noiseCompDetectSigma', opts.noiseCompDetectSigma, ...
+        'adaptiveSigma',   opts.adaptiveSigma, ...
         'plotResults',     opts.plotResults);
     EEG.etc.zapline.config    = zaplineConfig;
     EEG.etc.zapline.analytics = analyticsResults;    
