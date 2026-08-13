@@ -17,14 +17,26 @@ function eval_clean(EEGraw, EEGclean, StageScoring, opts)
 %   WelchOverlap : Welch overlap fraction (default 0.5).
 %   FreqLim      : [fMin fMax] for power plots (default [0 srate/2]).
 %   FreqScale    : 'linear', 'log', or 'both' (default).
-%   SavePath     : Full path + base filename; suffix + '.png' appended per figure.
+%   SavePath     : Full path + base filename; suffix + '.png'/'.mat' appended per figure/cache file.
 %   EpochsToPlot : Epoch indices for overlay plots; default = first epoch of each stage.
+%   cachepower   : If true, cache run.run_pwelch output via smartcache; if false, run uncached (default false).
+%   cachefooof   : If true, cache run.run_fooof output via smartcache; if false, run uncached (default false).
 %
-%   Produces four figures via gedai.evalplots sub-functions:
-%     psd_per_stage  — clean vs. raw PSD per sleep stage
-%     psd_overview   — two-tile PSD coloured by stage
-%     topo_band_power — topographic band power, raw vs. clean
-%     epoch_overlay  — per-epoch signal overlay
+%   Plot toggles (all default true)
+%   --------------------------------
+%   PlotCharacteristics   : GEDAI cleaning characteristics summary.
+%   PlotPsdPerStage       : Clean vs. raw PSD per sleep stage (single channel).
+%   PlotPsdPerStageChans  : Clean vs. raw PSD per sleep stage, all channels.
+%   PlotPsdOverview       : Two-tile PSD coloured by stage.
+%   PlotTopoBandPower     : Topographic band power, raw vs. clean.
+%   PlotTopoBandStage     : Topographic band power by stage.
+%   PlotEpochOverlay      : Per-epoch signal overlay.
+%   PlotTimefreq          : Time-frequency PSD with FOOOF exponent overlay.
+%   PlotExponentByStage   : FOOOF aperiodic exponent by sleep stage.
+%   PlotSlopesTimecourse  : FOOOF aperiodic exponent time course.
+%
+%   FOOOF is only computed if at least one of PlotTimefreq, PlotExponentByStage,
+%   PlotSlopesTimecourse is true.
 
 arguments
     EEGraw
@@ -41,14 +53,22 @@ arguments
     opts.FooofMedianSmooth  = 3       % Hz — median smoothing window
     opts.FooofPeakWidthLims = [0.5 20]
     opts.FooofAperiodicMode = 'fixed' % 'fixed' or 'knee'
-    opts.EOGMontage   = [54 248 1 230]  % [L1 L2 R1 R2] EGI-256 bipolar EOG; [] = skip
     opts.TopoBandLims = []              % nBands x 2 — [lo hi] per band; NaN row = auto
     opts.refresh = false;
     opts.net = 'EGI256';
+    opts.cachepower (1,1) logical = false
+    opts.cachefooof (1,1) logical = false
+    opts.PlotCharacteristics  (1,1) logical = true
+    opts.PlotPsdPerStage      (1,1) logical = true
+    opts.PlotPsdPerStageChans (1,1) logical = true
+    opts.PlotPsdOverview      (1,1) logical = true
+    opts.PlotTopoBandPower    (1,1) logical = true
+    opts.PlotTopoBandStage    (1,1) logical = true
+    opts.PlotEpochOverlay     (1,1) logical = true
+    opts.PlotTimefreq         (1,1) logical = true
+    opts.PlotExponentByStage  (1,1) logical = true
+    opts.PlotSlopesTimecourse (1,1) logical = true
 end
-
-%%% --- Pathing ---
-basepath = fileparts(opts.SavePath);
 
 %%% --- Interpolate ---
 tic;
@@ -60,26 +80,30 @@ toc
 EEGclean    = chans1020(EEGclean, false, 'add_eog', 0, 'net', opts.net);
 EEGraw      = chans1020(EEGraw, false, 'add_eog', 0, 'net', opts.net);
 
-%%% --- Compute Welch power spectra ---
+%%% --- Compute Welch power spectra (cached only if opts.cachepower) ---
 fprintf('gedai.eval_clean: computing Welch power (clean) ...\n');
-[PwrClean, FreqsClean] = smartcache( ...
-    @() run.run_pwelch(EEGclean, opts.EpochLength, ...
-        opts.WelchWindow, opts.WelchOverlap), ...
-            fullfile([opts.SavePath '_' 'PSDclean' '.mat']), ...
-            opts.refresh , {'Power', 'Freqs'});
+if opts.cachepower
+    [PwrClean, FreqsClean] = smartcache( ...
+        @() run.run_pwelch(EEGclean, opts.EpochLength, ...
+            opts.WelchWindow, opts.WelchOverlap), ...
+                fullfile([opts.SavePath '_' 'PSDclean' '.mat']), ...
+                opts.refresh , {'Power', 'Freqs'});
+else
+    [PwrClean, FreqsClean] = run.run_pwelch(EEGclean, opts.EpochLength, ...
+        opts.WelchWindow, opts.WelchOverlap);
+end
 
 fprintf('gedai.eval_clean: computing Welch power (raw) ...\n');
-[PwrRaw, FreqsRaw] = smartcache( ...
-    @() run.run_pwelch(EEGraw, opts.EpochLength, ...
-        opts.WelchWindow, opts.WelchOverlap), ...
-            fullfile([opts.SavePath '_' 'PSDraw' '.mat']), ...
-            opts.refresh , {'Power', 'Freqs'});
-
-% [PwrClean, Freqs] = run.run_pwelch(EEGclean, opts.EpochLength, ...
-%     opts.WelchWindow, opts.WelchOverlap);
-% 
-% [PwrRaw, ~] = run.run_pwelch(EEGraw, opts.EpochLength, ...
-%     opts.WelchWindow, opts.WelchOverlap);
+if opts.cachepower
+    [PwrRaw, FreqsRaw] = smartcache( ...
+        @() run.run_pwelch(EEGraw, opts.EpochLength, ...
+            opts.WelchWindow, opts.WelchOverlap), ...
+                fullfile([opts.SavePath '_' 'PSDraw' '.mat']), ...
+                opts.refresh , {'Power', 'Freqs'});
+else
+    [PwrRaw, FreqsRaw] = run.run_pwelch(EEGraw, opts.EpochLength, ...
+        opts.WelchWindow, opts.WelchOverlap);
+end
 
 %%% --- Channel index used for PSD line plots ---
 goodLabels = {EEGclean.chanlocs.labels};
@@ -95,115 +119,135 @@ if size(PwrClean, 2) ~= numel(stageScoring)
     warning('Sleep scoring vector length does not match # epochs');
 end
 
-% %%% --- Fix chanlocs for topoplot ---
-% EEGclean = qol.bids_fixchanlocs(EEGclean);
-
 %%% --- Figures (no FOOOF) ---
-try
-gedai.evalplots.gedai_characteristics(EEGclean.etc.GEDAI, 'Srate', EEGclean.srate, 'SavePath', opts.SavePath);
-end
-try
-gedai.evalplots.gedai_characteristics(EEGclean.etc.gedai, 'Srate', EEGclean.srate, 'SavePath', opts.SavePath);
-end
-
-
-evalplots.psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
-    'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
-
-evalplots.psd_per_stage_chans(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
-    'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
-
-evalplots.psd_overview(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
-    'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
-
-evalplots.topo_band_power(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
-    EEGraw.chanlocs, 'CLims', opts.TopoBandLims, 'SavePath', opts.SavePath);
-
-evalplots.topo_band_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
-    EEGclean.chanlocs, 'SavePath', opts.SavePath);
-
-%%% --- Append EOG + EMG channels for epoch overlay ---
-EEGclean    = chans1020(EEGclean, 0, 'add_eog', 1, 'net', opts.net);
-EEGraw      = chans1020(EEGraw, 0, 'add_eog', 1, 'net', opts.net);
-
-%%% --- Epoch overlay ---
-evalplots.epoch_overlay(EEGraw, EEGclean, stageScoring(1:30/opts.EpochLength:end), ...
-    'EpochLength', 30, 'EpochsToPlot', opts.EpochsToPlot, ...
-    'SavePath', opts.SavePath);
-
-%%% --- Pre-smooth power spectra for FOOOF (done once, reused across frequency ranges) ---
-powerRawSmooth   = oscip.smooth_spectrum_median(PwrRaw(FzIdx, :, :),   FreqsRaw,   opts.FooofMedianSmooth);
-powerRawSmooth   = oscip.smooth_spectrum(powerRawSmooth,   FreqsRaw,   opts.FooofMeanSmooth);
-powerCleanSmooth = oscip.smooth_spectrum_median(PwrClean(FzIdx, :, :), FreqsClean, opts.FooofMedianSmooth);
-powerCleanSmooth = oscip.smooth_spectrum(powerCleanSmooth, FreqsClean, opts.FooofMeanSmooth);
-
-%%% --- FOOOF loop over frequency ranges ---
-fooofRanges = {[2 30], [30 45], [2 45]};
-slopesRaw   = cell(1, numel(fooofRanges));
-slopesClean = cell(1, numel(fooofRanges));
-frLabels    = cell(1, numel(fooofRanges));
-
-for iRange = 1:numel(fooofRanges)
-    fr      = fooofRanges{iRange};
-    frLabel = sprintf('%d–%d Hz', fr(1), fr(2));
-    frTag   = sprintf('fooof%d-%d', fr(1), fr(2));
-
-    %%% --- Raw FOOOF ---
-    fprintf('eval_clean: running FOOOF (raw, %s) ...\n', frLabel);
-    [FooofRaw] = smartcache( ...
-        @() run.run_fooof(powerRawSmooth, FreqsRaw, [], ...
-            'FrequencyRange', fr, ...
-            'MeanSmoothSpan', opts.FooofMeanSmooth, ...
-            'MedianSmoothSpan', opts.FooofMedianSmooth, ...
-            'PeakWidthLimits', opts.FooofPeakWidthLims, ...
-            'AperiodicMode', opts.FooofAperiodicMode), ...
-                fullfile([opts.SavePath '_FOOOFraw_' frTag '.mat']), ...
-                false, {'FOOOF'});
-
-    %%% --- Clean FOOOF ---
-    fprintf('eval_clean: running FOOOF (clean, %s) ...\n', frLabel);
-    [FooofClean] = smartcache( ...
-        @() run.run_fooof(powerCleanSmooth, FreqsClean, [], ...
-            'FrequencyRange', fr, ...
-            'MeanSmoothSpan', opts.FooofMeanSmooth, ...
-            'MedianSmoothSpan', opts.FooofMedianSmooth, ...
-            'PeakWidthLimits', opts.FooofPeakWidthLims, ...
-            'AperiodicMode', opts.FooofAperiodicMode), ...
-                fullfile([opts.SavePath '_FooofClean_' frTag '.mat']), ...
-                false, {'FOOOF'});       
-
-% [PwrRaw, Freqs] = smartcache( ...
-%     @() run.run_pwelch(EEGraw, opts.EpochLength, ...
-%         opts.WelchWindow, opts.WelchOverlap), ...
-%             fullfile([opts.SavePath '_' 'PSDraw' '.mat']), ...
-%             false, {'Power', 'Freqs'});    
-
-%     FooofClean = run.run_fooof(pwr, Freqs, [], ...
-%         'FrequencyRange', fr, ...
-%         'MeanSmoothSpan', opts.FooofMeanSmooth, ...
-%         'MedianSmoothSpan', opts.FooofMedianSmooth, ...
-%         'PeakWidthLimits', opts.FooofPeakWidthLims, ...
-%         'AperiodicMode', opts.FooofAperiodicMode);
-
-    %%% --- Save slopes ---
-    slopesRaw{iRange}   = FooofRaw.Exponents;
-    slopesClean{iRange} = FooofClean.Exponents;
-    frLabels{iRange}    = frLabel;
+if opts.PlotCharacteristics
+    % etc field capitalization varies by GEDAI version; try both, swallow the one that doesn't exist
+    try
+        gedai.evalplots.gedai_characteristics(EEGclean.etc.GEDAI, 'Srate', EEGclean.srate, 'SavePath', opts.SavePath);
+    end
+    try
+        gedai.evalplots.gedai_characteristics(EEGclean.etc.gedai, 'Srate', EEGclean.srate, 'SavePath', opts.SavePath);
+    end
 end
 
-%%% --- Figures (FOOOF) ---
-saveSuffix = [opts.SavePath '_' frTag];
-evalplots.timefreq(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
-    'ChanLabel', goodLabels{FzIdx}, ...
-    'EpochLength', opts.EpochLength, 'FreqLim', opts.FreqLim, ...
-    'ExponentsClean', FooofClean.Exponents, ...
-    'ExponentsRaw',   FooofRaw.Exponents, ...
-    'FooofLabel', frLabel, ...
-    'SavePath', saveSuffix);
+if opts.PlotPsdPerStage
+    evalplots.psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
+        'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
+end
 
-evalplots.exponent_by_stage(slopesClean, slopesRaw, stageScoring, ...
-    'FooofLabel', frLabels, 'SavePath', opts.SavePath);
+if opts.PlotPsdPerStageChans
+    evalplots.psd_per_stage_chans(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
+        'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
+end
 
-evalplots.slopes_timecourse(slopesRaw, slopesClean, fooofRanges, stageScoring, ...
-    'EpochLength', opts.EpochLength, 'SavePath', opts.SavePath);
+if opts.PlotPsdOverview
+    evalplots.psd_overview(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
+        'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
+end
+
+if opts.PlotTopoBandPower
+    evalplots.topo_band_power(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
+        EEGraw.chanlocs, 'CLims', opts.TopoBandLims, 'SavePath', opts.SavePath);
+end
+
+if opts.PlotTopoBandStage
+    evalplots.topo_band_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
+        EEGclean.chanlocs, 'SavePath', opts.SavePath);
+end
+
+if opts.PlotEpochOverlay
+    %%% --- Append EOG + EMG channels for epoch overlay ---
+    EEGclean    = chans1020(EEGclean, 0, 'add_eog', 1, 'net', opts.net);
+    EEGraw      = chans1020(EEGraw, 0, 'add_eog', 1, 'net', opts.net);
+
+    evalplots.epoch_overlay(EEGraw, EEGclean, stageScoring(1:30/opts.EpochLength:end), ...
+        'EpochLength', 30, 'EpochsToPlot', opts.EpochsToPlot, ...
+        'SavePath', opts.SavePath);
+end
+
+%%% --- FOOOF: only run if a FOOOF-dependent plot is requested ---
+needFooof = opts.PlotTimefreq || opts.PlotExponentByStage || opts.PlotSlopesTimecourse;
+if needFooof
+    %%% --- Pre-smooth power spectra for FOOOF (done once, reused across frequency ranges) ---
+    powerRawSmooth   = oscip.smooth_spectrum_median(PwrRaw(FzIdx, :, :),   FreqsRaw,   opts.FooofMedianSmooth);
+    powerRawSmooth   = oscip.smooth_spectrum(powerRawSmooth,   FreqsRaw,   opts.FooofMeanSmooth);
+    powerCleanSmooth = oscip.smooth_spectrum_median(PwrClean(FzIdx, :, :), FreqsClean, opts.FooofMedianSmooth);
+    powerCleanSmooth = oscip.smooth_spectrum(powerCleanSmooth, FreqsClean, opts.FooofMeanSmooth);
+
+    %%% --- FOOOF loop over frequency ranges ---
+    fooofRanges = {[2 30], [30 45], [2 45]};
+    slopesRaw   = cell(1, numel(fooofRanges));
+    slopesClean = cell(1, numel(fooofRanges));
+    frLabels    = cell(1, numel(fooofRanges));
+
+    for iRange = 1:numel(fooofRanges)
+        fr      = fooofRanges{iRange};
+        frLabel = sprintf('%d–%d Hz', fr(1), fr(2));
+        frTag   = sprintf('fooof%d-%d', fr(1), fr(2));
+
+        fprintf('eval_clean: running FOOOF (raw, %s) ...\n', frLabel);
+        fprintf('eval_clean: running FOOOF (clean, %s) ...\n', frLabel);
+        if opts.cachefooof
+            FooofRaw = smartcache( ...
+                @() run.run_fooof(powerRawSmooth, FreqsRaw, [], ...
+                    'FrequencyRange', fr, ...
+                    'MeanSmoothSpan', opts.FooofMeanSmooth, ...
+                    'MedianSmoothSpan', opts.FooofMedianSmooth, ...
+                    'PeakWidthLimits', opts.FooofPeakWidthLims, ...
+                    'AperiodicMode', opts.FooofAperiodicMode), ...
+                        fullfile([opts.SavePath '_FOOOFraw_' frTag '.mat']), ...
+                        false, {'FOOOF'});
+
+            FooofClean = smartcache( ...
+                @() run.run_fooof(powerCleanSmooth, FreqsClean, [], ...
+                    'FrequencyRange', fr, ...
+                    'MeanSmoothSpan', opts.FooofMeanSmooth, ...
+                    'MedianSmoothSpan', opts.FooofMedianSmooth, ...
+                    'PeakWidthLimits', opts.FooofPeakWidthLims, ...
+                    'AperiodicMode', opts.FooofAperiodicMode), ...
+                        fullfile([opts.SavePath '_FooofClean_' frTag '.mat']), ...
+                        false, {'FOOOF'});
+        else
+            FooofRaw = run.run_fooof(powerRawSmooth, FreqsRaw, [], ...
+                'FrequencyRange', fr, ...
+                'MeanSmoothSpan', opts.FooofMeanSmooth, ...
+                'MedianSmoothSpan', opts.FooofMedianSmooth, ...
+                'PeakWidthLimits', opts.FooofPeakWidthLims, ...
+                'AperiodicMode', opts.FooofAperiodicMode);
+
+            FooofClean = run.run_fooof(powerCleanSmooth, FreqsClean, [], ...
+                'FrequencyRange', fr, ...
+                'MeanSmoothSpan', opts.FooofMeanSmooth, ...
+                'MedianSmoothSpan', opts.FooofMedianSmooth, ...
+                'PeakWidthLimits', opts.FooofPeakWidthLims, ...
+                'AperiodicMode', opts.FooofAperiodicMode);
+        end
+
+        slopesRaw{iRange}   = FooofRaw.Exponents;
+        slopesClean{iRange} = FooofClean.Exponents;
+        frLabels{iRange}    = frLabel;
+    end
+
+    %%% --- Figures (FOOOF) ---
+    if opts.PlotTimefreq
+        saveSuffix = [opts.SavePath '_' frTag]; % last range in the loop (broadest)
+        evalplots.timefreq(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
+            'ChanLabel', goodLabels{FzIdx}, ...
+            'EpochLength', opts.EpochLength, 'FreqLim', opts.FreqLim, ...
+            'ExponentsClean', FooofClean.Exponents, ...
+            'ExponentsRaw',   FooofRaw.Exponents, ...
+            'FooofLabel', frLabel, ...
+            'SavePath', saveSuffix);
+    end
+
+    if opts.PlotExponentByStage
+        evalplots.exponent_by_stage(slopesClean, slopesRaw, stageScoring, ...
+            'FooofLabel', frLabels, 'SavePath', opts.SavePath);
+    end
+
+    if opts.PlotSlopesTimecourse
+        evalplots.slopes_timecourse(slopesRaw, slopesClean, fooofRanges, stageScoring, ...
+            'EpochLength', opts.EpochLength, 'SavePath', opts.SavePath);
+    end
+end
 end
