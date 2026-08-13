@@ -140,10 +140,31 @@ for iGroup = 1:nGroups
     % ── Worker count from available RAM. Peak per-worker allocation in
     %    GEDAI_per_band is roughly the band's data copy plus working
     %    copies; BYTES_PER_SAMPLE_CH bundles the double (8 B) with that
-    %    multiplier. Calibrated so that 567 ep x 244 ch needs >1/12 of a
-    %    2 TB machine's free RAM (observed OOM at 12 workers), while
-    %    498 ep x 231 ch does not.
-    BYTES_PER_SAMPLE_CH = 8 * 24;   % 8 B double x ~24 working copies
+    %    multiplier.
+    %
+    %    Recalibrated 2026-08-13 after removing GEDAI_per_band's per-band
+    %    COV/COV_2/Eval/Eval_2 arrays and rank-truncating the GEVD (see
+    %    GEDAI-svennonito commit 8c39921). Measured directly: one worker's
+    %    full peak footprint (broadcast copy of unfiltered_data + its
+    %    MODWT band extraction + its GEDAI_per_band call), N=256, at three
+    %    matched-scale bands (T=48/192/384 samples), P swept 450k-1.8M
+    %    samples to confirm linearity in N*P before trusting the ratio:
+    %       old code : 46.4 x (N*P*8B)   [band 1, T=48 — matches the report's
+    %                   dominant-band claim; note this is already ~2x the
+    %                   24x hardcoded above, so worker counts before this
+    %                   change may have been under-provisioned even pre-fix]
+    %       new code : 15.2-15.3 x (N*P*8B), consistent across all three
+    %                   bands tested (T=48, 192, 384) to within 1%. The
+    %                   per-band GEVD arrays that used to set the ceiling
+    %                   are now small enough that the fixed, band-independent
+    %                   costs (broadcast copy, MODWT scratch, clean_EEG's
+    %                   output buffers) dominate instead — hence no strong
+    %                   per-band variation left to calibrate against.
+    %    16x carries ~5% headroom over the measured ceiling; the pre-existing
+    %    SAFETY factor below covers the rest. Re-measure if channel count,
+    %    MODWT extraction (e.g. porting stateful_modwt_single_band), or
+    %    clean_EEG's output buffering changes again.
+    BYTES_PER_SAMPLE_CH = 8 * 16;   % 8 B double x ~16 working copies
     SAFETY              = 0.70;      % leave headroom for client + OS cache
     MAX_WORKERS         = 12;
 
