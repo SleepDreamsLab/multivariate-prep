@@ -11,10 +11,14 @@ function failures = run_gedai_bids(BIDS, opts)
 %   Input paths
 %   -----------
 %   filteredpath      Root of the filtered derivatives, organised as
-%                     <sub>/<ses>/<fileID>_desc-<filtdesc>_eeg.dat.
+%                     <sub>/<ses>/<fileID>_desc-<filtdesc>_eeg.set.
 %                     Default: <BIDS root>/derivatives/prep-ged/A_filtered
 %   filtdesc          desc label used when building the filtered filename.
 %                     Default: 'filt'
+%   inputfileext      Extension of the filtered input. Default: '.set' - the filtered
+%                     file carries chanlocs/urchanlocs, which BrainVision cannot store
+%                     and which are needed to interpolate the channels that
+%                     run_filter_bids removed as bad.
 %   scoringpath       Directory containing sleep-scoring files (.json or .csv).
 %                     Default: <BIDS root>/derivatives/scoring/scores/Manual_Checked
 %   sfppath           Path passed to the SFP resolver.
@@ -36,7 +40,7 @@ function failures = run_gedai_bids(BIDS, opts)
 %   ---
 %   tasklabel         BIDS task label(s) to query. Default: {'Sleep','sleep'}.
 %   acqlabel    BIDS recording label to query. Default: '125Hz'.
-%   noteegchannels    Channel indices to drop. Default: 257:264.
+%   noteegchannels    Channel indices to drop. Default: 257:300.
 %   net               EEG net identifier passed to chans1020. Default: 'EGI256'.
 %
 %   Subject filter
@@ -63,7 +67,7 @@ arguments
     %--- Input paths ---
     opts.inputpath        char = ''
     opts.inputdesc        char = 'filt'
-    opts.inputfileext     char = '.vhdr'    
+    opts.inputfileext     char = '.set'
     opts.scoringpath      char = fullfile(BIDS.pth, 'derivatives', 'scoring', 'scores', 'Manual_Checked')
     opts.sfppath          char = BIDS.pth
     opts.leadfielddir     char = fullfile(BIDS.pth, '..', 'Data_Analysis', 'Brainstorm_db', 'Leadfield_PM', 'data')
@@ -170,7 +174,15 @@ for ifile = 1:numel(filesEEG)
     EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
 
     %%% Read SFP file (dome-solved channel locations)
-    if ~isempty(opts.sfppath)
+    %%% Only for legacy inputs: run_filter_bids now writes .set, which already carries
+    %%% chanlocs and urchanlocs. Re-reading them here would be wrong anyway, since it
+    %%% assumes the file still holds the full montage in SFP order, and the bad
+    %%% channels have already been dropped from it.
+    if isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs) && ...
+            isfield(EEG.chanlocs, 'X') && ~isempty([EEG.chanlocs.X])
+        fprintf('\nUsing channel locations stored in %s\n', opts.inputfileext)
+
+    elseif ~isempty(opts.sfppath)
         sfpFile = gedai.matchSfpFile(opts.sfppath, p.entities.sub, p.entities.ses);
         fprintf('\nReading %s ...\n', sfpFile)
         chanlocs     = readlocs(sfpFile);
@@ -184,8 +196,8 @@ for ifile = 1:numel(filesEEG)
         end
 
     elseif strcmp(BIDS.description.Name, {'ercp'})
-        chanfile = fullfile(fileparts(rawFile), [fileID, '_channels.tsv']);
-        elecfile = fullfile(fileparts(rawFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
+        chanfile = fullfile(fileparts(eegFile), [fileID, '_channels.tsv']);
+        elecfile = fullfile(fileparts(eegFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
         [EEG, channelData, elecData] = bids_importchanlocs(EEG, chanfile, elecfile);
 
         % Urchanlocs
@@ -201,25 +213,28 @@ for ifile = 1:numel(filesEEG)
     %%% Replace isolated N1 epochs at stage boundaries
     scoringDigits_NoN1 = gedai.killN1(scoringDigits);
 
-    %%% Bad channel detection
-    D = tic;
-    [removed_channels, corr, znoise] = smartcache( ...
-        @() clean_channels(EEG, 0.7, 4, [], 0.5, 25), ...
-        fullfile(opts.savepath, subDir, [fileID '_badchans.mat']), ...
-        false, {'', 'removed_channels', 'corr', 'znoise'});
-    KeepTime.BadChannelDetection = toc(D);
-
-    %%% Bad channel figure
-    badchanFigDir = fullfile(opts.figpath, 'badchans', subDir);
-    if ~exist(badchanFigDir, 'dir'), mkdir(badchanFigDir); end
-    gedai.plotBadChannels(corr, znoise, EEG.chanlocs, ...
-        fullfile(badchanFigDir, [fileID '_BadChannelTopoplot.png']));
+    %%% Bad channels
+    %%% Detected and removed by run_filter_bids before Zapline, where clean_channels
+    %%% can still see the line noise its noise criterion is based on. The mask is only
+    %%% needed here to select the matching rows of the leadfield.
+    badchanFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.inputdesc '_badchans.mat']);
+    if ~isfile(badchanFile)
+        error('run_gedai_bids:noBadChannels', ...
+            ['Bad channel file not found (%s). Bad channels are now detected and ' ...
+             'removed in run_filter_bids, before Zapline - re-run it for this recording.'], badchanFile);
+    end
+    fprintf('Badchans → %s\n', badchanFile)
+    removed_channels = getfield(load(badchanFile, 'removed_channels'), 'removed_channels');
+    if numel(removed_channels) - nnz(removed_channels) ~= EEG.nbchan
+        error('run_gedai_bids:badChannelMismatch', ...
+            ['Bad channel mask expects %d channels left of %d, but the filtered file ' ...
+             'has %d - mask and file are out of sync.'], ...
+            numel(removed_channels) - nnz(removed_channels), numel(removed_channels), EEG.nbchan);
+    end
+    fprintf('%d channel(s) already removed as bad\n', nnz(removed_channels))
 
     %%% Leadfield covariance matrix
-    lfCOV = gedai.loadrefcov(opts.leadfielddir, p, EEG.nbchan, removed_channels);
-
-    %%% Remove bad channels
-    EEG = pop_select(EEG, 'nochannel', find(removed_channels));
+    lfCOV = gedai.loadrefcov(opts.leadfielddir, p, numel(removed_channels), removed_channels);
 
     %%% Average re-reference
     EEG.data = EEG.data - sum(EEG.data, 1) / (size(EEG.data, 1) + 1);    

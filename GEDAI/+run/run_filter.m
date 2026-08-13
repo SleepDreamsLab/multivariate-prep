@@ -9,7 +9,7 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %   EEG   — EEGLAB EEG struct (already imported by the caller)
 %
 % OPTIONAL NAME-VALUE:
-%   noteegchannels  channel indices to drop before processing  (default 257:264)
+%   noteegchannels  channel indices to drop before processing  (default 257:300)
 %   targetsrate     resample to this rate in Hz; 0 = skip      (default 125)
 %   removeDC        apply DC-removal filter                    (default true)
 %   zapline        apply Zapline-plus line-noise removal      (default true)
@@ -21,6 +21,13 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %                   the 5.0 ceiling, so 9 passes are computed and 8 discarded (default false)
 %   KeepTime        struct of prior timings to merge into the output (default [])
 %   cleanline       apply CleanLine after Zapline               (default true)
+%   badchannels     detect and remove bad channels with clean_channels, after DC
+%                   removal and before Zapline. EEG.chanlocs must carry X/Y/Z. The
+%                   full montage stays available in EEG.urchanlocs, so the removed
+%                   channels can be interpolated back downstream  (default false)
+%   badchanfile     .mat cache path for the bad channel results; required when
+%                   badchannels is true
+%   refresh         recompute the bad channel cache even if it exists (default false)
 %   JsonFile        full path for a JSON sidecar with processing timings;
 %                   '' = skip                                  (default '')
 %   zeropatchseconds   cut out all-zero patches (amplifier crash padding) longer
@@ -60,7 +67,7 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 
 arguments
     EEG                  struct
-    opts.noteegchannels  (1,:) double  = 257:264
+    opts.noteegchannels  (1,:) double  = 257:300
     opts.targetsrate     (1,1) double  = 0
     opts.removeDC        (1,1) logical = true
     opts.zapline         (1,1) logical = true
@@ -76,6 +83,9 @@ arguments
     opts.plotResults     (1,1) logical = true
     opts.zeropatchseconds   (1,1) double  = 5
     opts.restorezeropatches (1,1) logical = true
+    opts.badchannels     (1,1) logical = false
+    opts.badchanfile     char          = ''
+    opts.refresh         (1,1) logical = false
 end
 
 KeepTime = opts.KeepTime;
@@ -105,6 +115,44 @@ if opts.removeDC
     D = tic; fprintf('\nDC removal ...\n')
     EEG.data = filtfilt(EEG_DCFilter_NumDen(1,:), EEG_DCFilter_NumDen(2,:), double(EEG.data'))';
     KeepTime.DCRemoval = toc(D);
+end
+
+%%% Bad channel detection and removal
+%%% Sits here, between the DC filter and Zapline, for two reasons. Detection needs the
+%%% line noise: the second criterion in clean_channels is the ratio of >50 Hz to <45 Hz
+%%% amplitude, which Zapline and CleanLine are about to flatten (the correlation
+%%% criterion runs on the <45 Hz band and is indifferent to the ordering). Removal
+%%% belongs here too: Zapline estimates its DSS spatial filter from the channel
+%%% covariance, so a channel dominated by line noise both biases how many components
+%%% are removed per chunk and gets its artefact smeared over the montage by the
+%%% projection. The full montage is preserved in EEG.urchanlocs for interpolation.
+if opts.badchannels
+    if isempty(opts.badchanfile)
+        error('run_filter:noBadChanFile', ...
+            'Bad channel detection needs a cache path; pass it via the badchanfile option.')
+    end
+    if isempty(EEG.chanlocs) || ~isfield(EEG.chanlocs, 'X') || isempty([EEG.chanlocs.X])
+        error('run_filter:noChanlocs', ...
+            'Bad channel detection needs EEG.chanlocs with X/Y/Z coordinates.')
+    end
+
+    %%% Keep a record of the full montage before anything is dropped
+    if ~isfield(EEG, 'urchanlocs') || isempty(EEG.urchanlocs)
+        EEG.urchanlocs = EEG.chanlocs;
+        for iCh = 1:numel(EEG.chanlocs)
+            EEG.chanlocs(iCh).urchan = iCh;
+        end
+    end
+
+    D = tic; fprintf('\nBad channel detection ...\n')
+    [removed_channels, corrs, znoise] = smartcache( ...
+        @() clean_channels(EEG, 0.7, 4, [], 0.5, 25), ...
+        opts.badchanfile, opts.refresh, {'', 'removed_channels', 'corr', 'znoise'});
+    EEG.etc.badchans = struct('mask', removed_channels, 'corr', corrs, 'znoise', znoise);
+    KeepTime.BadChannelDetection = toc(D);
+
+    fprintf('Removing %d/%d channels flagged as bad.\n', nnz(removed_channels), EEG.nbchan)
+    EEG = pop_select(EEG, 'nochannel', find(removed_channels));
 end
 
 %%% Zapline
