@@ -37,6 +37,10 @@ function failures = run_filter_bids(BIDS, opts)
 %   badchanavgref   average-reference the data for the detection only and undo it
 %                   afterwards, so a single-electrode reference cannot make the ring
 %                   of channels around it look bad              (default true)
+%   flatthreshold   peak-to-peak in uV below which a 5-s window counts as flat; a
+%                   channel flat for more than half the recording is removed. A dead
+%                   electrode passes both clean_channels criteria (0/0 = NaN, and NaN
+%                   fails every comparison), so it needs its own test (default 0.5)
 %   sfppath         path passed to the SFP resolver; clean_channels needs channel
 %                   locations                                   (default BIDS root)
 %   savefileext     '.set' (EEGLAB) or anything else for BrainVision (default '.set')
@@ -73,6 +77,7 @@ arguments
     %--- Bad channels ---
     opts.badchannels      (1,1) logical  = true
     opts.badchanavgref    (1,1) logical  = true
+    opts.flatthreshold    (1,1) double   = 0.5
     opts.sfppath          char           = BIDS.pth
 
     %--- Subject filter ---
@@ -190,6 +195,7 @@ for ifile = 1:numel(filesEEG)
         'restorezeropatches', false, ...
         'badchannels',        opts.badchannels, ...
         'badchanavgref',      opts.badchanavgref, ...
+        'flatthreshold',      opts.flatthreshold, ...
         'badchanfile',        badchanFile, ...
         'refresh',            opts.refresh);
 
@@ -199,13 +205,17 @@ for ifile = 1:numel(filesEEG)
         pause(3); close(gcf);
     end
 
-    %%% Bad channel figure
+    %%% Bad channel figures: where the bad channels are, and when they went bad
     if opts.badchannels
         badchanFigDir = fullfile(opts.figpath, 'badchans', subDir);
         if ~exist(badchanFigDir, 'dir'), mkdir(badchanFigDir); end
         gedai.plotBadChannels(EEG.etc.badchans.corr, EEG.etc.badchans.znoise, ...
             EEG.urchanlocs, ...
-            fullfile(badchanFigDir, [fileID '_desc-' opts.desc '_BadChannelTopoplot.png']));
+            fullfile(badchanFigDir, [fileID '_desc-' opts.desc '_BadChannelTopoplot.png']), ...
+            EEG.etc.badchans.flatprop);
+        gedai.plotBadChannelTime(EEG.etc.badchans.corr, EEG.etc.badchans.mask, ...
+            fullfile(badchanFigDir, [fileID '_desc-' opts.desc '_BadChannelTimecourse.png']), ...
+            'title', fileID);
     end
 
     %%% Optional second Zapline pass

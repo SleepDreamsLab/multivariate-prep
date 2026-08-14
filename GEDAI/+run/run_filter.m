@@ -25,6 +25,10 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %                   removal and before Zapline. EEG.chanlocs must carry X/Y/Z. The
 %                   full montage stays available in EEG.urchanlocs, so the removed
 %                   channels can be interpolated back downstream  (default false)
+%   flatthreshold   peak-to-peak, in data units (uV), below which a window counts as
+%                   flat for gedai.detectFlatChannels. A channel flat for more than
+%                   half the recording is removed, the same duration rule the
+%                   correlation criterion uses                    (default 0.5)
 %   badchanavgref   average-reference the data for the bad channel detection only, and
 %                   undo it afterwards. Off, a single-electrode reference makes both
 %                   clean_channels criteria misfire on the ring of channels next to
@@ -89,6 +93,7 @@ arguments
     opts.restorezeropatches (1,1) logical = true
     opts.badchannels     (1,1) logical = false
     opts.badchanavgref   (1,1) logical = true
+    opts.flatthreshold   (1,1) double  = 0.5
     opts.badchanfile     char          = ''
     opts.refresh         (1,1) logical = false
 end
@@ -163,6 +168,13 @@ if opts.badchannels
 
     D = tic; fprintf('\nBad channel detection ...\n')
 
+    %%% Flat channels, on the data as recorded. Must come before the average reference:
+    %%% a dead channel reads as one constant value here, but subtracting the common
+    %%% average turns it into minus that average, which has real variance and is not
+    %%% flat at all. Same window grid and duration rule as the correlation criterion.
+    [flatmask, flatprop] = gedai.detectFlatChannels(EEG.data, EEG.srate, ...
+        'maxbrokentime', 0.5, 'threshold', opts.flatthreshold);
+
     %%% Average-reference for detection only, then undo it: the data handed to Zapline
     %%% and written out keeps the reference it came in with.
     avgRef = [];
@@ -172,16 +184,20 @@ if opts.badchannels
         EEG.data = EEG.data - avgRef;
     end
 
-    [removed_channels, corrs, znoise] = smartcache( ...
-        @() clean_channels(EEG, 0.7, 4, [], 0.5, 25), ...
-        opts.badchanfile, opts.refresh, {'', 'removed_channels', 'corr', 'znoise'});
+    %%% The flat mask is folded in inside the cached call, so the mask on disk is the
+    %%% one actually applied - run_gedai_bids reads it back to index the leadfield.
+    [removed_channels, corrs, znoise, flatprop] = smartcache( ...
+        @() detectBadChannels(EEG, flatmask, flatprop), ...
+        opts.badchanfile, opts.refresh, ...
+        {'', 'removed_channels', 'corr', 'znoise', 'flatprop'});
 
     if ~isempty(avgRef)
         EEG.data = EEG.data + avgRef;
         clear avgRef
     end
 
-    EEG.etc.badchans = struct('mask', removed_channels, 'corr', corrs, 'znoise', znoise);
+    EEG.etc.badchans = struct('mask', removed_channels, 'corr', corrs, ...
+        'znoise', znoise, 'flatprop', flatprop);
     KeepTime.BadChannelDetection = toc(D);
 
     fprintf('Removing %d/%d channels flagged as bad.\n', nnz(removed_channels), EEG.nbchan)
@@ -244,4 +260,14 @@ end
 if opts.JsonFile ~= ""
     sidecarjson(KeepTime, char(opts.JsonFile));
 end
+end
+
+% -------------------------------------------------------------------------
+function [signal, removed_channels, corrs, znoise, flatprop] = detectBadChannels(EEG, flatmask, flatprop)
+% Union of the clean_channels criteria and the flat-line criterion, as one cached unit.
+% Kept together so the mask written to the cache is the mask actually applied to the
+% data: run_gedai_bids reads it back to pick the matching rows of the leadfield, and a
+% cache holding only part of the criteria would silently desync from the saved file.
+    [signal, removed_channels, corrs, znoise] = clean_channels(EEG, 0.7, 4, [], 0.5, 25);
+    removed_channels = removed_channels(:) | flatmask(:);
 end
