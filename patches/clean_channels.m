@@ -102,7 +102,21 @@ if signal.srate > 100
     for c=signal.nbchan:-1:1
         X(:,c) = filtfilt(B,1,signal.data(c,:)'); end
     % determine z-scored level of EM noise-to-signal ratio for each channel
-    noisiness = mad(signal.data'-X)./mad(X,1);
+    % LOCAL CHANGE: the denominator is the typical channel's low-frequency amplitude, not
+    % each channel's own. Upstream's per-channel ratio conflates "this channel has a lot
+    % of mains" with "this channel has little EEG", and on a high-density net the second
+    % reading dominates: the electrodes around the reference lose most of their signal to
+    % the average reference (their topography is closest to the global mean that gets
+    % subtracted), so their denominator collapses and they take over the top of the
+    % distribution. Measured on sub-drop0001/ses-t5 the three largest znoise values in the
+    % montage - 41.2, 36.8, 32.1 - were all vertex-ring channels, against a p95 of 2.0
+    % elsewhere, so no threshold could separate them from the genuinely noisy ones.
+    % A common denominator also matches what the criterion is used for here: these
+    % channels are dropped so their mains cannot bias the spatial filter Zapline
+    % estimates from the channel covariance, and that depends on absolute line-noise
+    % amplitude rather than on the ratio to the channel's own EEG. Side benefit: a dead
+    % channel now yields 0/positive = 0 instead of 0/0 = NaN.
+    noisiness = mad(signal.data'-X)./median(mad(X,1));
     znoise = (noisiness - median(noisiness)) ./ (mad(noisiness,1)*1.4826);        
     % trim channels based on that
     noise_mask = znoise > noise_threshold;
