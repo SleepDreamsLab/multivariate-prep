@@ -160,6 +160,16 @@ blocks = arrayfun(@(i) chans(i:min(i + g.blocksize - 1, numel(chans))), ...
 % 1 and feed the workers one block at a time while the rest idle; parfor would
 % then start the pool anyway, so the run looks parallel and is not.
 pool = gcp('nocreate');
+% A thread pool cannot run this: the multitaper inner loop calls MEX, and thread workers
+% reject it ("Use of MEX functions is not supported on a thread-based worker"). The pool
+% is session-global, so one left running by another stage - GEDAI's band loop with
+% PoolType 'Threads', say - would land here and fail mid-recording, after Zapline has
+% already spent its ten minutes. Swap it for a process pool instead.
+if ~isempty(pool) && contains(class(pool), 'ThreadPool')
+    fprintf('cleanline_fast: thread pool is running; replacing it with a process pool (MEX).\n');
+    delete(pool);
+    pool = [];
+end
 if isempty(pool)
     try
         pool = parpool;
