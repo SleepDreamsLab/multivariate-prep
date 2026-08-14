@@ -166,7 +166,7 @@ for iGroup = 1:nGroups
     %    MODWT extraction (e.g. porting stateful_modwt_single_band), or
     %    clean_EEG's output buffering changes again.
     BYTES_PER_SAMPLE_CH = 8 * 16;   % 8 B double x ~16 working copies
-    SAFETY              = 0.70;      % leave headroom for client + OS cache
+    SAFETY              = 0.90;      % leave headroom for client + OS cache
     MAX_WORKERS         = 12;
 
     LOAD_NOW = EEGstageGroup.pnts * EEGstageGroup.nbchan;

@@ -25,6 +25,10 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %                   removal and before Zapline. EEG.chanlocs must carry X/Y/Z. The
 %                   full montage stays available in EEG.urchanlocs, so the removed
 %                   channels can be interpolated back downstream  (default false)
+%   badchannelsonly stop after bad channel detection: no channel is removed, and Zapline
+%                   and CleanLine are skipped. Lets bidsfun_detect_badchans reach the
+%                   detection step through this same code path, so the data detection
+%                   sees is defined in exactly one place              (default false)
 %   badchanstride   evaluate every Nth window in the correlation criterion. The criterion
 %                   is a proportion of windows, so this trades precision, not
 %                   correctness: at 2 the proportion still rests on ~3300 windows of a
@@ -128,6 +132,7 @@ arguments
     opts.zeropatchseconds   (1,1) double  = 5
     opts.restorezeropatches (1,1) logical = true
     opts.badchannels     (1,1) logical = false
+    opts.badchannelsonly (1,1) logical = false
     opts.badchanavgref   (1,1) logical = true
     opts.badchanstride   (1,1) double  = 2
     opts.flatthreshold   (1,1) double  = 0.5
@@ -204,7 +209,7 @@ if opts.badchannels
     end
 
     %%% Parameters for both criteria, kept in one place: the calls below read them from
-    %%% here, and run_filter_bids writes them to the JSON sidecar, so what is recorded is
+    %%% here, and bidsfun_prepare_gedai writes them to the JSON sidecar, so what is recorded is
     %%% necessarily what was run.
     bcp = struct( ...
         'corrThreshold',       0.7, ...
@@ -241,7 +246,7 @@ if opts.badchannels
     end
 
     %%% The flat mask is folded in inside the cached call, so the mask on disk is the
-    %%% one actually applied - run_gedai_bids reads it back to index the leadfield.
+    %%% one actually applied - bidsfun_run_gedai reads it back to index the leadfield.
     [removed_channels, corrs, znoise, flatprop] = smartcache( ...
         @() detectBadChannels(EEG, flatmask, flatprop, bcp), ...
         opts.badchanfile, opts.refresh, ...
@@ -256,15 +261,25 @@ if opts.badchannels
         'znoise', znoise, 'flatprop', flatprop, 'params', bcp);
     KeepTime.BadChannelDetection = toc(D);
 
-    fprintf('Removing %d/%d channels flagged as bad.\n', nnz(removed_channels), EEG.nbchan)
-    EEG = pop_select(EEG, 'nochannel', find(removed_channels));
+    if opts.badchannelsonly
+        %%% Detection stage: leave the montage intact so the caller can label every
+        %%% channel, and skip the filtering below entirely.
+        fprintf('%d/%d channels flagged as bad (detection only, data left intact).\n', ...
+            nnz(removed_channels), EEG.nbchan)
+    else
+        fprintf('Removing %d/%d channels flagged as bad.\n', nnz(removed_channels), EEG.nbchan)
+        EEG = pop_select(EEG, 'nochannel', find(removed_channels));
+    end
 
     EEG.etc.filterparams.BadChannels = bcp;
     EEG.etc.filterparams.BadChannels.nRemoved = nnz(removed_channels);
 end
 
 %%% Zapline
-if opts.zapline
+%%% Skipped under badchannelsonly: that mode exists so bidsfun_detect_badchans can reach
+%%% the detection step through exactly this code path, rather than reimplementing the
+%%% drop / resample / excise / DC chain that decides what detection actually sees.
+if opts.zapline && ~opts.badchannelsonly
     D = tic; fprintf('\nZapline plus ...\n')
     [EEG.data, zaplineConfig, analyticsResults] = clean_data_with_zapline_plus( ...
         double(EEG.data), EEG.srate, ...
@@ -289,7 +304,7 @@ if opts.zapline
 end
 
 %%% Cleanline
-if opts.cleanline 
+if opts.cleanline && ~opts.badchannelsonly
 
 %     % base CleanLine directly on what ZapLine actually found and treated
 %     linefreqs = zaplineConfig.noisefreqs;
@@ -320,7 +335,7 @@ if opts.cleanline
 end
 
 %%% Put the all-zero patches back so the data regains its original length and timing.
-%%% run_filter_bids sets this to false and restores later, after its own second Zapline
+%%% bidsfun_prepare_gedai sets this to false and restores later, after its own second Zapline
 %%% pass, so that pass also runs on patch-free data.
 if opts.restorezeropatches
     EEG = run.restore_zero_patches(EEG);
@@ -336,7 +351,7 @@ end
 function [signal, removed_channels, corrs, znoise, flatprop] = detectBadChannels(EEG, flatmask, flatprop, bcp)
 % Union of the clean_channels criteria and the flat-line criterion, as one cached unit.
 % Kept together so the mask written to the cache is the mask actually applied to the
-% data: run_gedai_bids reads it back to pick the matching rows of the leadfield, and a
+% data: bidsfun_run_gedai reads it back to pick the matching rows of the leadfield, and a
 % cache holding only part of the criteria would silently desync from the saved file.
     [signal, removed_channels, corrs, znoise] = clean_channels(EEG, ...
         bcp.corrThreshold, bcp.noiseThreshold, bcp.windowSeconds, bcp.maxBrokenTime, ...

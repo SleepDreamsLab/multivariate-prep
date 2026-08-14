@@ -185,7 +185,7 @@ for ifile = 1:numel(filesEEG)
     EEGfilt = eeg_import(filtFile);
     EEGfilt = pop_select(EEGfilt, 'nochannel', intersect(1:EEGfilt.nbchan, opts.noteegchannels));
 
-    %%% Interpolate the channels run_filter_bids removed as bad, so the filtered
+    %%% Interpolate the channels bidsfun_prepare_gedai removed as bad, so the filtered
     %%% recording is comparable to the raw one channel by channel. urchanlocs holds the
     %%% montage as it was before the removal; eeg_interp restores its order too.
     if isfield(EEGfilt, 'urchanlocs') && ~isempty(EEGfilt.urchanlocs) && ...

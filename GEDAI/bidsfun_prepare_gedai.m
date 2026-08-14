@@ -1,4 +1,4 @@
-function failures = run_filter_bids(BIDS, opts)
+function failures = bidsfun_prepare_gedai(BIDS, opts)
 % RUN_FILTER_BIDS  Preprocess BIDS EEG files: import, resample, DC removal, bad
 %   channel removal, Zapline.
 %   Results are saved as EEGLAB .set files under
@@ -7,8 +7,8 @@ function failures = run_filter_bids(BIDS, opts)
 %   are dropped here, and only urchanlocs says which ones to interpolate back.
 %
 % USAGE:
-%   run_filter_bids(BIDS)
-%   run_filter_bids(BIDS, subjectfilter={'sub-xxx'}, refresh=true)
+%   bidsfun_prepare_gedai(BIDS)
+%   bidsfun_prepare_gedai(BIDS, subjectfilter={'sub-xxx'}, refresh=true)
 %
 % INPUTS:
 %   BIDS   — bids.layout object
@@ -29,11 +29,12 @@ function failures = run_filter_bids(BIDS, opts)
 %   zeropatchseconds  cut out all-zero patches (amplifier crash padding) longer than
 %                   this many seconds before filtering, restore them before saving;
 %                   0 = skip                                    (default 5)
-%   badchannels     detect and remove bad channels after DC removal and before
-%                   Zapline, while the line noise clean_channels keys on is still
-%                   there. The mask is cached as
-%                   <fileID>_desc-<desc>_badchans.mat next to the filtered file and
-%                   read back by run_gedai_bids for the leadfield  (default true)
+%   badchannels     remove the bad channels before Zapline, so they cannot influence
+%                   its spatial filters                          (default true)
+%   badchandesc     desc of the mask written by bidsfun_detect_badchans. Kept separate
+%                   from desc so that re-filtering and re-detecting do not invalidate
+%                   each other. If no mask exists this stage detects one itself, using
+%                   the same code path                           (default 'badchan')
 %   badchanavgref   average-reference the data for the detection only and undo it
 %                   afterwards, so a single-electrode reference cannot make the ring
 %                   of channels around it look bad              (default true)
@@ -79,6 +80,7 @@ arguments
 
     %--- Bad channels ---
     opts.badchannels      (1,1) logical  = true
+    opts.badchandesc      char           = 'badchan'
     opts.badchanavgref    (1,1) logical  = true
     opts.badchanstride    (1,1) double   = 2
     opts.flatthreshold    (1,1) double   = 0.5
@@ -96,7 +98,7 @@ if isempty(opts.figpath),  opts.figpath  = fullfile(BIDS.pth, 'derivatives', opt
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
     'task', opts.tasklabel, 'acq', opts.acqlabel);
 if isempty(filesEEG)
-    error('run_filter_bids:noFiles', 'No matching EEG files found in BIDS layout.');
+    error('bidsfun_prepare_gedai:noFiles', 'No matching EEG files found in BIDS layout.');
 end
 
 %%% Loop over EEG files
@@ -176,10 +178,12 @@ for ifile = 1:numel(filesEEG)
         % continue
     end
 
-    %%% Bad channel cache
+    %%% Bad channel mask, owned by bidsfun_detect_badchans and keyed to its own desc so
+    %%% that re-filtering and re-detecting are independent. smartcache loads it when it
+    %%% exists, so this stage only computes a mask when the detection stage was skipped.
     badchanFile = '';
     if opts.badchannels
-        badchanFile = fullfile(outDir, [fileID '_desc-' opts.desc '_badchans.mat']);
+        badchanFile = fullfile(outDir, [fileID '_desc-' opts.badchandesc '_badchans.mat']);
     end
 
     %%% Run filter pipeline
@@ -202,7 +206,7 @@ for ifile = 1:numel(filesEEG)
         'badchanstride',      opts.badchanstride, ...
         'flatthreshold',      opts.flatthreshold, ...
         'badchanfile',        badchanFile, ...
-        'refresh',            opts.refresh);
+        'refresh',            false);   % never re-detect here; that is the detection stage's job
 
     if opts.plotResults
         nm = strrep(get(gcf, 'Name'), ' ', '_');
@@ -210,20 +214,9 @@ for ifile = 1:numel(filesEEG)
         pause(3); close(gcf);
     end
 
-    %%% Bad channel figures: where the bad channels are, and when they went bad
-    if opts.badchannels
-        badchanFigDir = fullfile(opts.figpath, 'badchans', subDir);
-        if ~exist(badchanFigDir, 'dir'), mkdir(badchanFigDir); end
-        gedai.plotBadChannels(EEG.etc.badchans.corr, EEG.etc.badchans.znoise, ...
-            EEG.urchanlocs, ...
-            fullfile(badchanFigDir, [fileID '_desc-' opts.desc '_BadChannelTopoplot.png']), ...
-            EEG.etc.badchans.flatprop);
-        gedai.plotBadChannelTime(EEG.etc.badchans.corr, EEG.etc.badchans.mask, ...
-            fullfile(badchanFigDir, [fileID '_desc-' opts.desc '_BadChannelTimecourse.png']), ...
-            'windowseconds', EEG.etc.badchans.params.windowSeconds * ...
-                             EEG.etc.badchans.params.windowStride, ...
-            'title', fileID);
-    end
+    %%% The bad channel figures and channels.tsv belong to bidsfun_detect_badchans, which
+    %%% owns that stage; drawing them again here would only duplicate them under a second
+    %%% desc. The applied mask is still recorded in this stage's JSON sidecar.
 
     %%% Optional second Zapline pass
     if opts.zapline2

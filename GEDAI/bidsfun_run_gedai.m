@@ -1,8 +1,8 @@
-function failures = run_gedai_bids(BIDS, opts)
+function failures = bidsfun_run_gedai(BIDS, opts)
 % RUN_GEDAI_BIDS  Run GEDAI artefact-rejection on pre-filtered BIDS EEG data.
 %
-%   run_gedai_bids(BIDS)
-%   run_gedai_bids(BIDS, Name, Value, ...)
+%   bidsfun_run_gedai(BIDS)
+%   bidsfun_run_gedai(BIDS, Name, Value, ...)
 %
 %   Required
 %   --------
@@ -18,7 +18,7 @@ function failures = run_gedai_bids(BIDS, opts)
 %   inputfileext      Extension of the filtered input. Default: '.set' - the filtered
 %                     file carries chanlocs/urchanlocs, which BrainVision cannot store
 %                     and which are needed to interpolate the channels that
-%                     run_filter_bids removed as bad.
+%                     bidsfun_prepare_gedai removed as bad.
 %   scoringpath       Directory containing sleep-scoring files (.json or .csv).
 %                     Default: <BIDS root>/derivatives/scoring/scores/Manual_Checked
 %   sfppath           Path passed to the SFP resolver.
@@ -72,6 +72,7 @@ arguments
     opts.inputpath        char = ''
     opts.inputdesc        char = 'filt'
     opts.inputfileext     char = '.set'
+    opts.badchandesc      char = 'badchan'
     opts.scoringpath      char = fullfile(BIDS.pth, 'derivatives', 'scoring', 'scores', 'Manual_Checked')
     opts.sfppath          char = BIDS.pth
     opts.leadfielddir     char = fullfile(BIDS.pth, '..', 'Data_Analysis', 'Brainstorm_db', 'Leadfield_PM', 'data')
@@ -113,7 +114,7 @@ end
 %%% Query EEG files from BIDS (used for entity extraction and subject iteration)
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
     'task', opts.tasklabel, 'acq', opts.acqlabel);
-if isempty(filesEEG); error('run_gedai_bids:noFiles', 'No matching EEG files found in BIDS layout.');
+if isempty(filesEEG); error('bidsfun_run_gedai:noFiles', 'No matching EEG files found in BIDS layout.');
 end
 
 %%% Scoring files
@@ -159,7 +160,7 @@ for ifile = 1:numel(filesEEG)
     scoringFile = gedai.matchScoringFile(p.entities, scoringfiles);
     fprintf('Scoring → %s\n', scoringFile)
     if isempty(scoringFile)
-        error('run_gedai_bids:noScoring', 'No scoring file matched for %s.', fileID);
+        error('bidsfun_run_gedai:noScoring', 'No scoring file matched for %s.', fileID);
     end
 
     %%% Load sleep scoring
@@ -179,7 +180,7 @@ for ifile = 1:numel(filesEEG)
     EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
 
     %%% Read SFP file (dome-solved channel locations)
-    %%% Only for legacy inputs: run_filter_bids now writes .set, which already carries
+    %%% Only for legacy inputs: bidsfun_prepare_gedai now writes .set, which already carries
     %%% chanlocs and urchanlocs. Re-reading them here would be wrong anyway, since it
     %%% assumes the file still holds the full montage in SFP order, and the bad
     %%% channels have already been dropped from it.
@@ -219,19 +220,19 @@ for ifile = 1:numel(filesEEG)
     scoringDigits_NoN1 = gedai.killN1(scoringDigits);
 
     %%% Bad channels
-    %%% Detected and removed by run_filter_bids before Zapline, where clean_channels
+    %%% Detected and removed by bidsfun_prepare_gedai before Zapline, where clean_channels
     %%% can still see the line noise its noise criterion is based on. The mask is only
     %%% needed here to select the matching rows of the leadfield.
-    badchanFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.inputdesc '_badchans.mat']);
+    badchanFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.badchandesc '_badchans.mat']);
     if ~isfile(badchanFile)
-        error('run_gedai_bids:noBadChannels', ...
-            ['Bad channel file not found (%s). Bad channels are now detected and ' ...
-             'removed in run_filter_bids, before Zapline - re-run it for this recording.'], badchanFile);
+        error('bidsfun_run_gedai:noBadChannels', ...
+            ['Bad channel file not found (%s). Run bidsfun_detect_badchans for this ' ...
+             'recording first.'], badchanFile);
     end
     fprintf('Badchans → %s\n', badchanFile)
     removed_channels = getfield(load(badchanFile, 'removed_channels'), 'removed_channels');
     if numel(removed_channels) - nnz(removed_channels) ~= EEG.nbchan
-        error('run_gedai_bids:badChannelMismatch', ...
+        error('bidsfun_run_gedai:badChannelMismatch', ...
             ['Bad channel mask expects %d channels left of %d, but the filtered file ' ...
              'has %d - mask and file are out of sync.'], ...
             numel(removed_channels) - nnz(removed_channels), numel(removed_channels), EEG.nbchan);
@@ -373,7 +374,7 @@ if ~isempty(failures)
     fclose(fid);
 end
 
-end % run_gedai_bids
+end % bidsfun_run_gedai
 
 % -------------------------------------------------------------------------
 function mode = resolveStageMode(stages, dict)
@@ -381,20 +382,20 @@ function mode = resolveStageMode(stages, dict)
 % A stage group is cleaned in a single pass, so one strength has to cover all of it:
 % stages within a group that disagree are an error, not something to silently pick from.
     if ~isConfigured(dict)
-        error('run_gedai_bids:unconfiguredModeDict', ...
+        error('bidsfun_run_gedai:unconfiguredModeDict', ...
             'Mode dictionary is unconfigured - it must define a mode for every stage.');
     end
 
     missing = stages(~isKey(dict, stages));
     if ~isempty(missing)
-        error('run_gedai_bids:missingStageMode', ...
+        error('bidsfun_run_gedai:missingStageMode', ...
             'No mode configured for stage(s) [%s] - add them to the mode dictionary.', ...
             num2str(missing(:)', '%d '));
     end
 
     modes = unique(string(dict(stages)));
     if numel(modes) > 1
-        error('run_gedai_bids:inconsistentMode', ...
+        error('bidsfun_run_gedai:inconsistentMode', ...
             ['Stages [%s] are cleaned together but map to different modes (%s) - ' ...
              'assign the same mode to all stages in a group.'], ...
             num2str(stages(:)', '%d '), strjoin(modes, ', '));

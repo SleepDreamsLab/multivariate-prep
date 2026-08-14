@@ -1,8 +1,8 @@
 function failures = run_sleeposci_bids(BIDS, opts)
 % RUN_GEDAI_BIDS  Run GEDAI artefact-rejection on pre-filtered BIDS EEG data.
 %
-%   run_gedai_bids(BIDS)
-%   run_gedai_bids(BIDS, Name, Value, ...)
+%   run_sleeposci_bids(BIDS)
+%   run_sleeposci_bids(BIDS, Name, Value, ...)
 %
 %   Required
 %   --------
@@ -102,7 +102,7 @@ end
 %%% Query EEG files from BIDS (used for entity extraction and subject iteration)
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
     'task', opts.tasklabel, 'acq', opts.acqlabel);
-if isempty(filesEEG); error('run_gedai_bids:noFiles', 'No matching EEG files found in BIDS layout.');
+if isempty(filesEEG); error('run_sleeposci_bids:noFiles', 'No matching EEG files found in BIDS layout.');
 end
 
 %%% Scoring files
@@ -143,7 +143,7 @@ for ifile = 1:numel(filesEEG)
     scoringFile = gedai.matchScoringFile(p.entities, scoringfiles);
     fprintf('Scoring → %s\n', scoringFile)
     if isempty(scoringFile)
-        error('run_gedai_bids:noScoring', 'No scoring file matched for %s.', fileID);
+        error('run_sleeposci_bids:noScoring', 'No scoring file matched for %s.', fileID);
     end
 
     %%% Load sleep scoring
