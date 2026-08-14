@@ -258,6 +258,9 @@ for ifile = 1:numel(filesEEG)
     [~, baseName] = fileparts(outFile);
     prepParams = struct();
     if isfield(EEG.etc, 'filterparams'), prepParams = EEG.etc.filterparams; end
+    %%% The bad channel settings belong to bidsfun_detect_badchans and are already in its
+    %%% sidecar; a second copy here could only ever drift from the mask actually applied.
+    if isfield(prepParams, 'BadChannels'), prepParams = rmfield(prepParams, 'BadChannels'); end
     prepParams.targetSampleRate = opts.targetsrate;
     prepParams.removeDC         = opts.removeDC;
     prepParams.zeroPatchSeconds = opts.zeropatchseconds;
