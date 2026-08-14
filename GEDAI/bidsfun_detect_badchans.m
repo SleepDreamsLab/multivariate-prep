@@ -95,6 +95,7 @@ for ifile = 1:numel(filesEEG)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
+    figsBefore = findall(0, 'Type', 'figure');
     try
 
     %%% Build output paths
@@ -215,6 +216,8 @@ for ifile = 1:numel(filesEEG)
 
     catch ME
         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
+        figsNow = findall(0, 'Type', 'figure');
+        close(figsNow(~ismember(figsNow, figsBefore)));
         failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
     end
 end

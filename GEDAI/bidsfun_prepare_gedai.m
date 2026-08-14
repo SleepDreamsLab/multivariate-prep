@@ -118,6 +118,7 @@ for ifile = 1:numel(filesEEG)
         continue
     end
     fprintf('\n=== %s ===\n', fileID)
+    figsBefore = findall(0, 'Type', 'figure');
     try
 
     %%% Build output paths
@@ -265,6 +266,12 @@ for ifile = 1:numel(filesEEG)
 
     catch ME
         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
+        %%% Close whatever this iteration left open. Zapline's figure is created inside
+        %%% run.run_filter but printed and closed here, so any failure in between - a
+        %%% CleanLine error, a failed save - would otherwise orphan one figure per
+        %%% recording, and a batch of nights ends with a screen full of them.
+        figsNow = findall(0, 'Type', 'figure');
+        close(figsNow(~ismember(figsNow, figsBefore)));
         failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
     end
 end
