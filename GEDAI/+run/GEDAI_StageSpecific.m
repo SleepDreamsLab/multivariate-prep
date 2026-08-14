@@ -177,13 +177,9 @@ for iGroup = 1:nGroups
     nWorkers = floor(SAFETY * freeBytes / perWorkerBytes);
     nWorkers = max(1, min(MAX_WORKERS, nWorkers));
 
-%     p = gcp('nocreate');
-%     if isempty(p) || p.NumWorkers ~= nWorkers
-%         delete(gcp('nocreate'));
-%         parpool('Processes', nWorkers);
-%     end
+    % Build target pool
     p = gcp('nocreate');
-    if isempty(p) || p.NumWorkers ~= nWorkers
+    if isempty(p) || abs(p.NumWorkers - nWorkers) > 0
         delete(gcp('nocreate'));
         c = parcluster('Processes');
         oldNT = c.NumThreads;

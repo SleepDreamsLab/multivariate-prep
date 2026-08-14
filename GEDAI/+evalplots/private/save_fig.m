@@ -8,6 +8,6 @@ end
 annotation('textbox', [0.01 0.01, 0.01 0.01], 'String', basePath, ...
     'FontSize', 6, 'LineStyle', 'none', 'Interpreter', 'none');
 fname = [basePath '_' suffix '.png'];
-print(fig, fname, '-dpng', '-r150');
+print(fig, fname, '-dpng', '-r100');
 fprintf('gedai.eval: saved %s\n', fname);
 end

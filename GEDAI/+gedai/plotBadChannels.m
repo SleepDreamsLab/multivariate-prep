@@ -25,6 +25,6 @@ function plotBadChannels(corr, znoise, chanlocs, savefile, flatprop)
     end
     colormap('gray');
     set(gcf, 'Color', 'w', 'Units', 'centimeters', 'Position', [2 2 10*nTiles 10]);
-    print(gcf, savefile, '-dpng', '-r150');
+    print(gcf, savefile, '-dpng', '-r100');
     close
 end
