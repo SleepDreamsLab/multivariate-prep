@@ -58,6 +58,7 @@ arguments
     opts.net = 'EGI256';
     opts.cachepower (1,1) logical = false
     opts.cachefooof (1,1) logical = false
+    opts.dointerpolate = true
     opts.PlotCharacteristics  (1,1) logical = true
     opts.PlotPsdPerStage      (1,1) logical = true
     opts.PlotPsdPerStageChans (1,1) logical = true
@@ -71,14 +72,16 @@ arguments
 end
 
 %%% --- Interpolate ---
-tic;
-EEGraw      = pop_interp(EEGraw, EEGraw.urchanlocs, 'spherical');
-EEGclean    = pop_interp(EEGclean, EEGraw.urchanlocs, 'spherical');
-toc
+if opts.dointerpolate
+    tic;
+    EEGraw      = pop_interp(EEGraw, EEGraw.urchanlocs, 'spherical');
+    EEGclean    = pop_interp(EEGclean, EEGraw.urchanlocs, 'spherical');
+    toc
+end
 
 %%% --- Rename 10-20 channels ---
-EEGclean    = chans1020(EEGclean, false, 'add_eog', 0, 'net', opts.net);
-EEGraw      = chans1020(EEGraw, false, 'add_eog', 0, 'net', opts.net);
+EEGclean    = chans1020(EEGclean, false, 'add_eog', 0, 'net', opts.net, 'chanprefix', 'E');
+EEGraw      = chans1020(EEGraw, false, 'add_eog', 0, 'net', opts.net, 'chanprefix', 'E');
 
 %%% --- Compute Welch power spectra (cached only if opts.cachepower) ---
 %%% Power matrices are chans x freqs x epochs.
