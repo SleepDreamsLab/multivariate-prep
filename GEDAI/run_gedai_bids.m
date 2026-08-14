@@ -55,6 +55,10 @@ function failures = run_gedai_bids(BIDS, opts)
 %   runs              Cell array of GEDAI run-config structs. Default: gedai.defaultRuns().
 %   epochstoplot      Epoch indices for diagnostic figures. Default: auto.
 %   prefix            Prefix prepended to the run savename. Default: ''.
+%   pooltype          'Processes' (default) or 'Threads' for GEDAI's band loop. Threads
+%                     share the broadcast data instead of copying it to every worker,
+%                     which is where ~10% of pipeline runtime goes, but they also share
+%                     one BLAS thread pool. Time it on one recording before adopting.
 %
 %   See dependancies.m.
 
@@ -95,6 +99,7 @@ arguments
     opts.runs                     = []
     opts.epochstoplot             = []
     opts.prefix            char   = ''
+    opts.pooltype {mustBeMember(opts.pooltype, {'Processes', 'Threads'})} = 'Processes'
 end
 
 if isempty(opts.inputpath), opts.inputpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
@@ -307,6 +312,7 @@ for ifile = 1:numel(filesEEG)
                 'BBMinThreshold',             r.BBMinThreshold, ...
                 'ComputeSENSAI',              r.computeSENSAI, ...
                 'ICAtype',                    r.ICAtype, ...
+                'PoolType',                   opts.pooltype, ...
                 'RefCOV',                     refCOV_perStage), ...
             gedaiDatFile, opts.refresh, {'EEGgedai', '', '', ''});
         KeepTime.GEDAI = toc(D);

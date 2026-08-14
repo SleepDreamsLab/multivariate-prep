@@ -37,6 +37,9 @@ function failures = run_filter_bids(BIDS, opts)
 %   badchanavgref   average-reference the data for the detection only and undo it
 %                   afterwards, so a single-electrode reference cannot make the ring
 %                   of channels around it look bad              (default true)
+%   badchanstride   evaluate every Nth window in the correlation criterion; the
+%                   criterion is a proportion of windows, so this costs precision, not
+%                   correctness. 1 restores the original behaviour  (default 2)
 %   flatthreshold   peak-to-peak in uV below which a 5-s window counts as flat; a
 %                   channel flat for more than half the recording is removed. A dead
 %                   electrode passes both clean_channels criteria (0/0 = NaN, and NaN
@@ -77,6 +80,7 @@ arguments
     %--- Bad channels ---
     opts.badchannels      (1,1) logical  = true
     opts.badchanavgref    (1,1) logical  = true
+    opts.badchanstride    (1,1) double   = 2
     opts.flatthreshold    (1,1) double   = 0.5
     opts.sfppath          char           = BIDS.pth
 
@@ -195,13 +199,14 @@ for ifile = 1:numel(filesEEG)
         'restorezeropatches', false, ...
         'badchannels',        opts.badchannels, ...
         'badchanavgref',      opts.badchanavgref, ...
+        'badchanstride',      opts.badchanstride, ...
         'flatthreshold',      opts.flatthreshold, ...
         'badchanfile',        badchanFile, ...
         'refresh',            opts.refresh);
 
     if opts.plotResults
         nm = strrep(get(gcf, 'Name'), ' ', '_');
-        print(gcf, fullfile(figDir, [fileID '_zapline_' nm '.png']), '-dpng', '-r150');
+        print(gcf, fullfile(figDir, [fileID '_zapline_' nm '.png']), '-dpng', '-r100');
         pause(3); close(gcf);
     end
 
@@ -215,6 +220,8 @@ for ifile = 1:numel(filesEEG)
             EEG.etc.badchans.flatprop);
         gedai.plotBadChannelTime(EEG.etc.badchans.corr, EEG.etc.badchans.mask, ...
             fullfile(badchanFigDir, [fileID '_desc-' opts.desc '_BadChannelTimecourse.png']), ...
+            'windowseconds', EEG.etc.badchans.params.windowSeconds * ...
+                             EEG.etc.badchans.params.windowStride, ...
             'title', fileID);
     end
 
@@ -233,7 +240,7 @@ for ifile = 1:numel(filesEEG)
     end
     if opts.plotResults & opts.zapline2
         nm = strrep(get(gcf, 'Name'), ' ', '_');
-        print(gcf, fullfile(figDir, [fileID '_zapline2_' nm '.png']), '-dpng', '-r150');
+        print(gcf, fullfile(figDir, [fileID '_zapline2_' nm '.png']), '-dpng', '-r100');
         pause(3); close(gcf);
     end
 
@@ -251,9 +258,17 @@ for ifile = 1:numel(filesEEG)
         pop_writebva(EEG, outFile, 'DataOrientation', 'MULTIPLEXED');
     end
 
-    %%% JSON timing sidecar
+    %%% JSON sidecar: timings plus the parameters each step actually ran with.
+    %%% The structs are built by run.run_filter next to the calls that consume them, so
+    %%% what is recorded here cannot drift from what was applied.
     [~, baseName] = fileparts(outFile);
-    sidecarjson(KeepTime, fullfile(outDir, [baseName '.json']));
+    prepParams = struct();
+    if isfield(EEG.etc, 'filterparams'), prepParams = EEG.etc.filterparams; end
+    prepParams.targetSampleRate = opts.targetsrate;
+    prepParams.removeDC         = opts.removeDC;
+    prepParams.zeroPatchSeconds = opts.zeropatchseconds;
+    sidecarjson(KeepTime, fullfile(outDir, [baseName '.json']), ...
+        struct('PreprocessingParameters', prepParams));
 
     catch ME
         fprintf('[ERROR] %s: %s\n', fileID, ME.message);

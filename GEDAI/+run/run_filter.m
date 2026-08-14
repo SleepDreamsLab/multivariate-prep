@@ -25,6 +25,10 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %                   removal and before Zapline. EEG.chanlocs must carry X/Y/Z. The
 %                   full montage stays available in EEG.urchanlocs, so the removed
 %                   channels can be interpolated back downstream  (default false)
+%   badchanstride   evaluate every Nth window in the correlation criterion. The criterion
+%                   is a proportion of windows, so this trades precision, not
+%                   correctness: at 2 the proportion still rests on ~3300 windows of a
+%                   9-h night. Set 1 for the original behaviour   (default 2)
 %   flatthreshold   peak-to-peak, in data units (uV), below which a window counts as
 %                   flat for gedai.detectFlatChannels. A channel flat for more than
 %                   half the recording is removed, the same duration rule the
@@ -70,8 +74,40 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 % Sinusoids reaching p < 0.01 were fitted by least squares and subtracted; target frequencies 
 % not reaching significance in a given window and channel were left unmodified. Fitted 
 % components were crossfaded sigmoidally across the 2-s overlap between adjacent windows.
-% Unlike the default CleanLine implementation, which subtracts an estimated sinusoid at each 
+% Unlike the default CleanLine implementation, which subtracts an estimated sinusoid at each
 % target frequency regardless of significance, subtraction here was conditional on the F-test.
+%
+% Bad channels:
+%
+% Bad channels were identified and removed before line-noise correction. For detection only, the
+% recording was re-referenced to the common average; the data carried forward retained the original
+% vertex (Cz) reference. This is necessary because under a single-electrode reference the electrodes
+% immediately surrounding the reference carry a near-zero potential difference, and both criteria
+% below are ratios in which that difference forms the denominator, so those channels are
+% systematically misclassified (here, the median reconstruction correlation of the ring of
+% electrodes adjacent to the reference fell from 0.99 to 0.73 when detection was run on
+% vertex-referenced data, while every other channel was unaffected). Three criteria were evaluated
+% over consecutive 5-s windows, and a channel was rejected when any of them held for more than 50%
+% of the recording. (i) Flat: the signal varied by no more than 0.5 uV peak-to-peak within the
+% window. This criterion is required because a dead electrode is invisible to the two that follow -
+% both are ratios that evaluate to 0/0 for a constant signal, and the resulting NaN fails every
+% threshold comparison. (ii) Line noise: the ratio of the >45 Hz to the <45 Hz robust amplitude
+% (median absolute deviation), the two bands separated by a 100th-order least-squares FIR lowpass
+% with a 45-50 Hz transition, expressed as a robust z-score across channels and thresholded at
+% z = 4. Because this criterion keys on power-line contamination, detection preceded Zapline-plus,
+% while the 50 and 100 Hz components were still present. (iii) Reconstruction correlation: 25 random
+% subsets of 25% of the channels were each used to predict all channels by spherical-spline
+% interpolation (Perrin et al., 1989); the element-wise median of the 25 predictions was taken as
+% the consensus estimate (RANSAC; Fischler & Bolles, 1981), and the Pearson correlation between each
+% channel's <45 Hz signal and its consensus prediction computed per window, with a threshold of
+% r = 0.7. Windows were evaluated at a stride of two, leaving the proportion estimated from
+% approximately 3,300 windows per recording. Channels flagged by any criterion were removed before
+% Zapline-plus so that they could not contribute to the estimation of its spatial filters; the full
+% montage was retained alongside the data so that removed channels could be restored by
+% spherical-spline interpolation wherever whole-head output was required. Detection used
+% clean_channels from the clean_rawdata plugin for EEGLAB (Kothe & Makeig, 2013; Delorme & Makeig,
+% 2004), locally modified to return the per-window correlations and to accept a window stride; the
+% flat-line criterion was implemented separately.
 
 arguments
     EEG                  struct
@@ -93,6 +129,7 @@ arguments
     opts.restorezeropatches (1,1) logical = true
     opts.badchannels     (1,1) logical = false
     opts.badchanavgref   (1,1) logical = true
+    opts.badchanstride   (1,1) double  = 2
     opts.flatthreshold   (1,1) double  = 0.5
     opts.badchanfile     char          = ''
     opts.refresh         (1,1) logical = false
@@ -166,14 +203,33 @@ if opts.badchannels
         end
     end
 
-    D = tic; fprintf('\nBad channel detection ...\n')
+    %%% Parameters for both criteria, kept in one place: the calls below read them from
+    %%% here, and run_filter_bids writes them to the JSON sidecar, so what is recorded is
+    %%% necessarily what was run.
+    bcp = struct( ...
+        'corrThreshold',       0.7, ...
+        'noiseThreshold',      4, ...
+        'windowSeconds',       5, ...
+        'maxBrokenTime',       0.5, ...
+        'numSamples',          25, ...
+        'subsetSizeFraction',  0.25, ...
+        'windowStride',        opts.badchanstride, ...
+        'averageReferenced',   opts.badchanavgref, ...
+        'flatThresholdMicroV', opts.flatthreshold, ...
+        'flatMaxBrokenTime',   0.5);
 
     %%% Flat channels, on the data as recorded. Must come before the average reference:
     %%% a dead channel reads as one constant value here, but subtracting the common
     %%% average turns it into minus that average, which has real variance and is not
     %%% flat at all. Same window grid and duration rule as the correlation criterion.
+    D = tic; fprintf('\nFlat channel detection ...\n')
     [flatmask, flatprop] = gedai.detectFlatChannels(EEG.data, EEG.srate, ...
-        'maxbrokentime', 0.5, 'threshold', opts.flatthreshold);
+        'windowseconds',  bcp.windowSeconds, ...
+        'maxbrokentime',  bcp.flatMaxBrokenTime, ...
+        'threshold',      bcp.flatThresholdMicroV);
+    KeepTime.FlatChannelDetection = toc(D);
+
+    D = tic; fprintf('\nBad channel detection ...\n')
 
     %%% Average-reference for detection only, then undo it: the data handed to Zapline
     %%% and written out keeps the reference it came in with.
@@ -187,7 +243,7 @@ if opts.badchannels
     %%% The flat mask is folded in inside the cached call, so the mask on disk is the
     %%% one actually applied - run_gedai_bids reads it back to index the leadfield.
     [removed_channels, corrs, znoise, flatprop] = smartcache( ...
-        @() detectBadChannels(EEG, flatmask, flatprop), ...
+        @() detectBadChannels(EEG, flatmask, flatprop, bcp), ...
         opts.badchanfile, opts.refresh, ...
         {'', 'removed_channels', 'corr', 'znoise', 'flatprop'});
 
@@ -197,11 +253,14 @@ if opts.badchannels
     end
 
     EEG.etc.badchans = struct('mask', removed_channels, 'corr', corrs, ...
-        'znoise', znoise, 'flatprop', flatprop);
+        'znoise', znoise, 'flatprop', flatprop, 'params', bcp);
     KeepTime.BadChannelDetection = toc(D);
 
     fprintf('Removing %d/%d channels flagged as bad.\n', nnz(removed_channels), EEG.nbchan)
     EEG = pop_select(EEG, 'nochannel', find(removed_channels));
+
+    EEG.etc.filterparams.BadChannels = bcp;
+    EEG.etc.filterparams.BadChannels.nRemoved = nnz(removed_channels);
 end
 
 %%% Zapline
@@ -217,7 +276,14 @@ if opts.zapline
         'adaptiveSigma',   opts.adaptiveSigma, ...
         'plotResults',     opts.plotResults);
     EEG.etc.zapline.config    = zaplineConfig;
-    EEG.etc.zapline.analytics = analyticsResults;    
+    EEG.etc.zapline.analytics = analyticsResults;
+    EEG.etc.filterparams.Zapline = struct( ...
+        'noisefreqs',           opts.noisefreqs, ...
+        'adaptiveNremove',      opts.adaptiveNremove, ...
+        'fixedNremove',         opts.fixedNremove, ...
+        'chunkLengthSeconds',   opts.chunkLength, ...
+        'noiseCompDetectSigma', opts.noiseCompDetectSigma, ...
+        'adaptiveSigma',        opts.adaptiveSigma);
     KeepTime.Zapline = toc(D);
     fprintf('ZapLine-plus: %.2f min\n', KeepTime.Zapline / 60);
 end
@@ -236,8 +302,12 @@ if opts.cleanline
 
     D = tic; fprintf('\nClean line ...\n')
     % EEG.data = double(EEG.data);
-    EEG = cleanline_fast(EEG, 'linefreqs', [opts.noisefreqs opts.noisefreqs*2], ...
+    clp = struct('linefreqs', [opts.noisefreqs opts.noisefreqs*2], ...
         'winsize', 4, 'winstep', 2, 'sigtest', true, 'pad', 2);
+    EEG = cleanline_fast(EEG, 'linefreqs', clp.linefreqs, ...
+        'winsize', clp.winsize, 'winstep', clp.winstep, ...
+        'sigtest', clp.sigtest, 'pad', clp.pad);
+    EEG.etc.filterparams.CleanLine = clp;
 
     % EEG = pop_cleanline(EEG, ...
     %     'chanlist', 1:EEG.nbchan, ...
@@ -263,11 +333,13 @@ end
 end
 
 % -------------------------------------------------------------------------
-function [signal, removed_channels, corrs, znoise, flatprop] = detectBadChannels(EEG, flatmask, flatprop)
+function [signal, removed_channels, corrs, znoise, flatprop] = detectBadChannels(EEG, flatmask, flatprop, bcp)
 % Union of the clean_channels criteria and the flat-line criterion, as one cached unit.
 % Kept together so the mask written to the cache is the mask actually applied to the
 % data: run_gedai_bids reads it back to pick the matching rows of the leadfield, and a
 % cache holding only part of the criteria would silently desync from the saved file.
-    [signal, removed_channels, corrs, znoise] = clean_channels(EEG, 0.7, 4, [], 0.5, 25);
+    [signal, removed_channels, corrs, znoise] = clean_channels(EEG, ...
+        bcp.corrThreshold, bcp.noiseThreshold, bcp.windowSeconds, bcp.maxBrokenTime, ...
+        bcp.numSamples, bcp.subsetSizeFraction, bcp.windowStride);
     removed_channels = removed_channels(:) | flatmask(:);
 end

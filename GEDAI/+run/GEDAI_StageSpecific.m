@@ -56,6 +56,7 @@ arguments
     opts.ComputeSENSAI (1,1) logical = true
     opts.ICAtype                     = 'none'
     opts.GEDAIEnovaChannelThreshold = Inf;
+    opts.PoolType {mustBeMember(opts.PoolType, {'Processes', 'Threads'})} = 'Processes'
 end
 
 if ~iscell(SleepStages)
@@ -177,15 +178,34 @@ for iGroup = 1:nGroups
     nWorkers = floor(SAFETY * freeBytes / perWorkerBytes);
     nWorkers = max(1, min(MAX_WORKERS, nWorkers));
 
-    % Build target pool
-    p = gcp('nocreate');
-    if isempty(p) || abs(p.NumWorkers - nWorkers) > 0
+    %%% Pool type. GEDAI's band loop broadcasts unfiltered_data to every worker; on a
+    %%% process pool that is a full serialized copy each (~7 GB for 4 h of N2 at 256 ch),
+    %%% and the profile attributes ~10% of pipeline runtime to that dispatch. A thread
+    %%% pool shares the array instead of copying it. The trade is that thread workers
+    %%% share one BLAS thread pool, so per-band svd/eig calls contend where separate
+    %%% processes would not - hence an option to be timed, not a new default.
+    wantThreads = strcmpi(opts.PoolType, 'Threads');
+    if wantThreads
+        %%% A thread pool cannot exceed MATLAB's computational threads, and the budget
+        %%% above assumes a per-worker copy that threads do not make, so it
+        %%% under-provisions here rather than over.
+        nWorkers = max(1, min(nWorkers, maxNumCompThreads));
+    end
+
+    % Build target pool (also rebuild when the pool that is up is of the wrong type)
+    p             = gcp('nocreate');
+    poolIsThreads = ~isempty(p) && contains(class(p), 'ThreadPool');
+    if isempty(p) || poolIsThreads ~= wantThreads || abs(p.NumWorkers - nWorkers) > 0
         delete(gcp('nocreate'));
-        c = parcluster('Processes');
-        oldNT = c.NumThreads;
-        c.NumThreads = 1;
-        parpool(c, nWorkers);
-        c.NumThreads = oldNT;   % restore profile
+        if wantThreads
+            parpool('Threads', nWorkers);
+        else
+            c = parcluster('Processes');
+            oldNT = c.NumThreads;
+            c.NumThreads = 1;
+            parpool(c, nWorkers);
+            c.NumThreads = oldNT;   % restore profile
+        end
     end
 
     fprintf(['gedai.GEDAI_PerStage: load %.2e, %.1f GB/worker, ' ...

@@ -1,4 +1,4 @@
-function [signal,removed_channels, corrs, znoise] = clean_channels(signal,corr_threshold,noise_threshold,window_len,max_broken_time,num_samples,subset_size)
+function [signal,removed_channels, corrs, znoise] = clean_channels(signal,corr_threshold,noise_threshold,window_len,max_broken_time,num_samples,subset_size,window_stride)
 % Remove channels with abnormal data from a continuous data set.
 % Signal = clean_channels(Signal,CorrelationThreshold,LineNoiseThreshold,WindowLength,MaxBrokenTime,NumSamples,SubsetSize)
 %
@@ -66,6 +66,12 @@ if ~exist('max_broken_time','var') || isempty(max_broken_time) max_broken_time =
 if ~exist('num_samples','var') || isempty(num_samples) num_samples = 50; end
 if ~exist('subset_size','var') || isempty(subset_size) subset_size = 0.25; end
 if ~exist('reset_rng','var') || isempty(reset_rng) reset_rng = true; end
+% SPEED (local addition): evaluate every window_stride-th window instead of every one.
+% The correlation criterion is a *proportion* of windows below threshold compared against
+% max_broken_time, so subsampling costs precision, not correctness: at stride 2 on a 9-h
+% night the proportion is still estimated from ~3300 windows, s.e. ~0.9%. Only channels
+% sitting within about a percentage point of the threshold can flip. 1 = original.
+if ~exist('window_stride','var') || isempty(window_stride) window_stride = 1; end
 
 subset_size = round(subset_size*size(signal.data,1)); 
 
@@ -76,11 +82,16 @@ else
     max_broken_time = round(signal.srate)*max_broken_time;
 end
 
+% Keep this in double. Working in single looks tempting (the recording arrives as single,
+% so the promotion adds no information) but measured 6x SLOWER: the RANSAC projector P is
+% double, and a single x double matmul falls off the BLAS fast path and converts per
+% window. It also shifted znoise by up to 13.7 z-units, because mad(data-X) is a small
+% difference of large numbers and cancels badly in single. Tested, rejected - don't retry.
 signal.data = double(signal.data);
 [C,S] = size(signal.data);
 window_len = window_len*round(signal.srate);
 wnd = 0:window_len-1;
-offsets = 1:window_len:S-window_len;
+offsets = 1:window_len*window_stride:S-window_len;
 W = length(offsets);
 
 fprintf('Scanning for bad channels...\n');
@@ -134,7 +145,9 @@ flagged = corrs < corr_threshold;
 % mark all channels for removal which have more flagged samples than the maximum number of
 % ignored samples
 removed_channels = false(C,1);
-removed_channels(usable_channels) = sum(flagged,2)*window_len > max_broken_time;
+% window_stride scales the flagged count back onto the full recording, so max_broken_time
+% keeps meaning the same fraction of the night whatever the stride.
+removed_channels(usable_channels) = sum(flagged,2)*window_len*window_stride > max_broken_time;
 removed_channels = removed_channels | noise_mask';
 
 % apply removal
