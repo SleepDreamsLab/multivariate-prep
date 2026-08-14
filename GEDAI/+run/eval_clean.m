@@ -58,7 +58,6 @@ arguments
     opts.net = 'EGI256';
     opts.cachepower (1,1) logical = false
     opts.cachefooof (1,1) logical = false
-    opts.dointerpolate = true
     opts.PlotCharacteristics  (1,1) logical = true
     opts.PlotPsdPerStage      (1,1) logical = true
     opts.PlotPsdPerStageChans (1,1) logical = true
@@ -72,11 +71,23 @@ arguments
 end
 
 %%% --- Interpolate ---
-if opts.dointerpolate
-    tic;
-    EEGraw      = pop_interp(EEGraw, EEGraw.urchanlocs, 'spherical');
-    EEGclean    = pop_interp(EEGclean, EEGraw.urchanlocs, 'spherical');
-    toc
+%%% Both datasets go back to the full montage before anything below runs: bad channels
+%%% were dropped from the cleaned data upstream, and every plot function here compares
+%%% the two through a single channel index or a single chanlocs, so they have to share a
+%%% montage. Only call pop_interp when something is actually missing - it returns early
+%%% otherwise, but the call still drags eeg_checkset behind it.
+if isfield(EEGraw, 'urchanlocs') && ~isempty(EEGraw.urchanlocs)
+    urchanlocs = EEGraw.urchanlocs;
+    if numel(EEGraw.chanlocs) < numel(urchanlocs)
+        fprintf('gedai.eval_clean: interpolating %d channel(s) in raw ...\n', ...
+            numel(urchanlocs) - numel(EEGraw.chanlocs));
+        EEGraw = pop_interp(EEGraw, urchanlocs, 'spherical');
+    end
+    if numel(EEGclean.chanlocs) < numel(urchanlocs)
+        fprintf('gedai.eval_clean: interpolating %d channel(s) in clean ...\n', ...
+            numel(urchanlocs) - numel(EEGclean.chanlocs));
+        EEGclean = pop_interp(EEGclean, urchanlocs, 'spherical');
+    end
 end
 
 %%% --- Rename 10-20 channels ---

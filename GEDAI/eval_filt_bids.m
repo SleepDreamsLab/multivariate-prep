@@ -77,7 +77,6 @@ arguments
 
     %--- Epoch ---
     opts.epochlength (1,1) double = 30
-    opts.dointerpolate (1,1) logical = false
 
     %--- Plots (forwarded to run.eval_clean) ---
     opts.PlotCharacteristics  (1,1) logical = true
@@ -186,18 +185,17 @@ for ifile = 1:numel(filesEEG)
     EEGfilt = eeg_import(filtFile);
     EEGfilt = pop_select(EEGfilt, 'nochannel', intersect(1:EEGfilt.nbchan, opts.noteegchannels));
 
-    %%% Interpolate the channels bidsfun_prepare_gedai removed as bad, so the filtered
-    %%% recording is comparable to the raw one channel by channel. urchanlocs holds the
-    %%% montage as it was before the removal; eeg_interp restores its order too.
-    if isfield(EEGfilt, 'urchanlocs') && ~isempty(EEGfilt.urchanlocs) && ...
-            numel(EEGfilt.urchanlocs) > EEGfilt.nbchan
-        fprintf('Interpolating %d channel(s) removed as bad ...\n', ...
-            numel(EEGfilt.urchanlocs) - EEGfilt.nbchan)
-        EEGfilt = pop_interp(EEGfilt, EEGfilt.urchanlocs, 'spherical');
+    %%% Channel locations come from the .set itself. bidsfun_prepare_gedai stored the
+    %%% pre-removal montage in urchanlocs, and run.eval_clean interpolates the missing
+    %%% channels back from it. Do not overwrite either here: after the removal channel k
+    %%% is no longer the k-th SFP entry, so chanlocs(1:nbchan) would mislabel every
+    %%% channel, and overwriting urchanlocs would destroy the record of what to restore.
+    if ~isfield(EEGfilt, 'chanlocs') || isempty(EEGfilt.chanlocs) || ...
+            ~isfield(EEGfilt.chanlocs, 'X') || isempty([EEGfilt.chanlocs.X])
+        %%% Legacy input with no stored coordinates: assume the full montage, SFP order
+        EEGfilt.chanlocs   = chanlocs(1:EEGfilt.nbchan);
+        EEGfilt.urchanlocs = EEGfilt.chanlocs;
     end
-
-    EEGfilt.chanlocs   = chanlocs(1:EEGfilt.nbchan);
-    EEGfilt.urchanlocs = EEGfilt.chanlocs;
 
     %%% Evaluate
     figDir = fullfile(opts.figpath, ['desc-' opts.filtdesc], subDir);
@@ -208,7 +206,6 @@ for ifile = 1:numel(filesEEG)
         'SavePath', fullfile(figDir, fileID), ...
         'refresh', opts.refresh, ...
         'net', opts.net, ...
-        'dointerpolate', opts.dointerpolate, ...
         'PlotCharacteristics', opts.PlotCharacteristics, ...
         'PlotPsdPerStage', opts.PlotPsdPerStage, ...
         'PlotPsdPerStageChans', opts.PlotPsdPerStageChans, ...
