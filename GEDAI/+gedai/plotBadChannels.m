@@ -12,10 +12,16 @@ function plotBadChannels(corr, znoise, chanlocs, savefile, flatprop, params)
     if nargin < 5, flatprop = []; end
     if nargin < 6, params   = struct(); end
 
-    corrTh   = fieldOr(params, 'corrThreshold',        0.7);
-    brokenTh = fieldOr(params, 'maxBrokenTime',        0.5);
-    noiseTh  = fieldOr(params, 'noiseReportThreshold', 4);
-    flatTh   = fieldOr(params, 'flatMaxBrokenTime',    0.5);
+    %%% All three panels mark what was actually removed, so every red dot on this figure
+    %%% corresponds to a channel missing from the data. That means the line-noise panel
+    %%% keys on noiseThreshold, not on the reporting threshold: with noiseThreshold = Inf
+    %%% the criterion removes nothing and the panel is deliberately unmarked. The
+    %%% channels.tsv still reports which channels are line-noisy, via
+    %%% noiseReportThreshold - that is the place to look for them.
+    corrTh   = fieldOr(params, 'corrThreshold',     0.7);
+    brokenTh = fieldOr(params, 'maxBrokenTime',     0.5);
+    noiseTh  = fieldOr(params, 'noiseThreshold',    4);
+    flatTh   = fieldOr(params, 'flatMaxBrokenTime', 0.5);
 
     lowcorrprop = sum(corr < corrTh, 2) ./ size(corr, 2);
     nTiles      = 2 + ~isempty(flatprop);
@@ -23,18 +29,24 @@ function plotBadChannels(corr, znoise, chanlocs, savefile, flatprop, params)
     figure();
     tiledlayout(1, nTiles, 'TileSpacing', 'compact', 'Padding', 'compact');
 
+    %%% Panels follow the order the criteria are decided in: flat first (a dead channel
+    %%% is invisible to the other two), then correlation, then line noise.
+    if ~isempty(flatprop)
+        nexttile();
+        drawTopo(flatprop, chanlocs, flatprop > flatTh, [0 1]);
+        title({'Prop. of recording', sprintf('flat  (marked > %g)', flatTh)});
+    end
+
     nexttile();
     drawTopo(lowcorrprop, chanlocs, lowcorrprop > brokenTh, [0 .8]);
     title({'Prop. of recording', sprintf('with corr < %g  (marked > %g)', corrTh, brokenTh)});
 
     nexttile();
     drawTopo(znoise, chanlocs, znoise > noiseTh, [0 10]);
-    title({'Line noise', sprintf('(marked z > %g, not removed)', noiseTh)});
-
-    if ~isempty(flatprop)
-        nexttile();
-        drawTopo(flatprop, chanlocs, flatprop > flatTh, [0 1]);
-        title({'Prop. of recording', sprintf('flat  (marked > %g)', flatTh)});
+    if isfinite(noiseTh)
+        title({'Line noise', sprintf('(removed at z > %g)', noiseTh)});
+    else
+        title({'Line noise', '(reported only, removes nothing)'});
     end
 
     colormap('gray');
