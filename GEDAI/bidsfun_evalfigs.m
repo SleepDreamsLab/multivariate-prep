@@ -1,8 +1,8 @@
-function failures = eval_filt_bids(BIDS, opts)
-% EVAL_FILT_BIDS  Evaluate filtering quality by comparing raw and filtered EEG.
+function failures = bidsfun_evalfigs(BIDS, opts)
+% BIDSFUN_EVALFIGS  Evaluate filtering quality by comparing raw and filtered EEG.
 %
-%   eval_filt_bids(BIDS)
-%   eval_filt_bids(BIDS, Name, Value, ...)
+%   bidsfun_evalfigs(BIDS)
+%   bidsfun_evalfigs(BIDS, Name, Value, ...)
 %
 %   Runs run.eval_clean on paired raw and desc-filt EEG files to
 %   visualise the effect of the filtering pipeline.
@@ -98,7 +98,7 @@ if isempty(opts.figpath),      opts.figpath      = fullfile(BIDS.pth, 'derivativ
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
     'task', opts.tasklabel, 'acq', opts.acqlabel);
 if isempty(filesEEG)
-    error('eval_filt_bids:noFiles', 'No matching EEG files found in BIDS layout.');
+    error('bidsfun_evalfigs:noFiles', 'No matching EEG files found in BIDS layout.');
 end
 
 %%% Scoring files
@@ -149,7 +149,7 @@ for ifile = 1:numel(filesEEG)
     end    
     scoringFile = gedai.matchScoringFile(p.entities, scoringfiles);
     if isempty(scoringFile)
-        error('eval_filt_bids:noScoring', 'No scoring file matched for %s.', fileID);
+        error('bidsfun_evalfigs:noScoring', 'No scoring file matched for %s.', fileID);
     end
     fprintf('Scoring → %s\n', scoringFile)
     scoringDigits = scoreloader(scoringFile);
@@ -185,7 +185,7 @@ for ifile = 1:numel(filesEEG)
     EEGfilt = eeg_import(filtFile);
     EEGfilt = pop_select(EEGfilt, 'nochannel', intersect(1:EEGfilt.nbchan, opts.noteegchannels));
 
-    %%% Channel locations come from the .set itself. bidsfun_prepare_gedai stored the
+    %%% Channel locations come from the .set itself. bidsfun_hp_zap_cleanline stored the
     %%% pre-removal montage in urchanlocs, and run.eval_clean interpolates the missing
     %%% channels back from it. Do not overwrite either here: after the removal channel k
     %%% is no longer the k-th SFP entry, so chanlocs(1:nbchan) would mislabel every

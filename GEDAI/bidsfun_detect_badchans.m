@@ -6,7 +6,7 @@ function failures = bidsfun_detect_badchans(BIDS, opts)
 %     <fileID>_desc-<desc>_badchans.json  timings and the parameters used
 %   plus topoplot and timecourse figures under <figpath>/badchans/<sub>/<ses>/.
 %
-%   This is its own stage, ahead of bidsfun_prepare_gedai, for two reasons. Detection is
+%   This is its own stage, ahead of bidsfun_hp_zap_cleanline, for two reasons. Detection is
 %   a decision made once per recording while filtering may be re-run repeatedly, and
 %   keying the mask to its own desc keeps the two from invalidating each other. It is
 %   also the step whose output you want to look at - and possibly overrule - before
@@ -25,7 +25,7 @@ function failures = bidsfun_detect_badchans(BIDS, opts)
 % OPTIONAL NAME-VALUE:
 %   desc            BIDS desc entity for the outputs             (default 'badchan')
 %   refresh         redetect even if the .mat exists             (default false)
-%   targetsrate     resample target in Hz; 0 = skip. Match bidsfun_prepare_gedai, or
+%   targetsrate     resample target in Hz; 0 = skip. Match bidsfun_hp_zap_cleanline, or
 %                   detection and filtering see different data   (default 0)
 %   removeDC        apply the DC-removal filter first. Likewise  (default true)
 %   zeropatchseconds  cut all-zero patches longer than this before detecting (default 5)
@@ -152,7 +152,7 @@ for ifile = 1:numel(filesEEG)
     end
 
     %%% Detect. run.run_filter stops after detection under badchannelsonly, so the
-    %%% preparation is identical to what bidsfun_prepare_gedai will apply later.
+    %%% preparation is identical to what bidsfun_hp_zap_cleanline will apply later.
     [EEG, KeepTime] = run.run_filter(EEG, ...
         'noteegchannels',     opts.noteegchannels, ...
         'targetsrate',        opts.targetsrate, ...
@@ -181,23 +181,27 @@ for ifile = 1:numel(filesEEG)
     %%% channels.tsv: the standard's own way to carry channel status, and the file to
     %%% edit by hand when a call needs overruling. The .mat keeps what does not fit in a
     %%% table (the per-window correlation matrix).
+    %%% status_description names why a channel was removed, so it lists only the criteria
+    %%% that remove: correlation and flatness. Line noise is reported instead, in its own
+    %%% column, because it no longer decides anything (see the note in run.run_filter).
     lowcorrprop = sum(bc.corr < bc.params.corrThreshold, 2) ./ size(bc.corr, 2);
     byCorr      = lowcorrprop(:) > bc.params.maxBrokenTime;
-    byNoise     = bc.znoise(:)   > bc.params.noiseThreshold;
     byFlat      = bc.flatprop(:) > bc.params.flatMaxBrokenTime;
     reason      = repmat("good", numel(bc.mask), 1);
-    reason(byCorr)  = "low_correlation";
-    reason(byNoise) = "line_noise";
-    reason(byFlat)  = "flat";                       % most specific wins
-    reason(byCorr & byNoise & ~byFlat) = "low_correlation+line_noise";
+    reason(byCorr) = "low_correlation";
+    reason(byFlat) = "flat";                        % most specific wins
+
+    reportTh = 4;
+    if isfield(bc.params, 'noiseReportThreshold'), reportTh = bc.params.noiseReportThreshold; end
+    highLineNoise = bc.znoise(:) > reportTh;
 
     T = table(string({EEG.urchanlocs.labels})', ...
               repmat("eeg", numel(bc.mask), 1), ...
               repmat("microV", numel(bc.mask), 1), ...
               string(repmat("good", numel(bc.mask), 1)), ...
-              reason, lowcorrprop(:), bc.znoise(:), bc.flatprop(:), ...
-        'VariableNames', {'name', 'type', 'units', 'status', ...
-                          'status_description', 'low_correlation_prop', 'znoise', 'flat_prop'});
+              reason, lowcorrprop(:), bc.znoise(:), highLineNoise, bc.flatprop(:), ...
+        'VariableNames', {'name', 'type', 'units', 'status', 'status_description', ...
+                          'low_correlation_prop', 'znoise', 'high_line_noise', 'flat_prop'});
     T.status(bc.mask(:)) = "bad";
     writetable(T, fullfile(outDir, [fileID '_desc-' opts.desc '_channels.tsv']), ...
         'FileType', 'text', 'Delimiter', '\t');

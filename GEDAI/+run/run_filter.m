@@ -209,11 +209,23 @@ if opts.badchannels
     end
 
     %%% Parameters for both criteria, kept in one place: the calls below read them from
-    %%% here, and bidsfun_prepare_gedai writes them to the JSON sidecar, so what is recorded is
+    %%% here, and bidsfun_hp_zap_cleanline writes them to the JSON sidecar, so what is recorded is
     %%% necessarily what was run.
+    %%% noiseThreshold is Inf on purpose: the line-noise criterion is computed and
+    %%% reported, but no longer removes anything. On these recordings the electrodes it
+    %%% ranks highest are consistently the ones around the vertex, and they are not
+    %%% artefacts of the statistic - with the per-channel denominator removed they came
+    %%% out further ahead still (100/81/70 sigma above the population). They genuinely
+    %%% carry the most >45 Hz energy on the head, plausibly because the net's lead bundle
+    %%% exits there. But their reconstruction correlation is ~0.99, i.e. the EEG in them
+    %%% is intact, they sit where sleep activity matters most, and removing mains is what
+    %%% the very next stage is for. znoise stays in the .mat, the channels.tsv and the
+    %%% topoplot, so a pathological channel is still visible; it just no longer decides.
+    %%% Set noiseThreshold back to a finite value to restore the old behaviour.
     bcp = struct( ...
         'corrThreshold',       0.7, ...
-        'noiseThreshold',      4, ...
+        'noiseThreshold',      Inf, ...
+        'noiseReportThreshold', 4, ...
         'windowSeconds',       5, ...
         'maxBrokenTime',       0.5, ...
         'numSamples',          25, ...
@@ -335,7 +347,7 @@ if opts.cleanline && ~opts.badchannelsonly
 end
 
 %%% Put the all-zero patches back so the data regains its original length and timing.
-%%% bidsfun_prepare_gedai sets this to false and restores later, after its own second Zapline
+%%% bidsfun_hp_zap_cleanline sets this to false and restores later, after its own second Zapline
 %%% pass, so that pass also runs on patch-free data.
 if opts.restorezeropatches
     EEG = run.restore_zero_patches(EEG);

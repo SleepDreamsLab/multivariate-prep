@@ -1,5 +1,5 @@
 function failures = bidsfun_run_gedai(BIDS, opts)
-% RUN_GEDAI_BIDS  Run GEDAI artefact-rejection on pre-filtered BIDS EEG data.
+% BIDSFUN_RUN_GEDAI  Run GEDAI artefact-rejection on pre-filtered BIDS EEG data.
 %
 %   bidsfun_run_gedai(BIDS)
 %   bidsfun_run_gedai(BIDS, Name, Value, ...)
@@ -18,7 +18,7 @@ function failures = bidsfun_run_gedai(BIDS, opts)
 %   inputfileext      Extension of the filtered input. Default: '.set' - the filtered
 %                     file carries chanlocs/urchanlocs, which BrainVision cannot store
 %                     and which are needed to interpolate the channels that
-%                     bidsfun_prepare_gedai removed as bad.
+%                     bidsfun_hp_zap_cleanline removed as bad.
 %   scoringpath       Directory containing sleep-scoring files (.json or .csv).
 %                     Default: <BIDS root>/derivatives/scoring/scores/Manual_Checked
 %   sfppath           Path passed to the SFP resolver.
@@ -180,7 +180,7 @@ for ifile = 1:numel(filesEEG)
     EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
 
     %%% Read SFP file (dome-solved channel locations)
-    %%% Only for legacy inputs: bidsfun_prepare_gedai now writes .set, which already carries
+    %%% Only for legacy inputs: bidsfun_hp_zap_cleanline now writes .set, which already carries
     %%% chanlocs and urchanlocs. Re-reading them here would be wrong anyway, since it
     %%% assumes the file still holds the full montage in SFP order, and the bad
     %%% channels have already been dropped from it.
@@ -220,7 +220,7 @@ for ifile = 1:numel(filesEEG)
     scoringDigits_NoN1 = gedai.killN1(scoringDigits);
 
     %%% Bad channels
-    %%% Detected and removed by bidsfun_prepare_gedai before Zapline, where clean_channels
+    %%% Detected and removed by bidsfun_hp_zap_cleanline before Zapline, where clean_channels
     %%% can still see the line noise its noise criterion is based on. The mask is only
     %%% needed here to select the matching rows of the leadfield.
     badchanFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.badchandesc '_badchans.mat']);

@@ -1,4 +1,4 @@
-function failures = bidsfun_prepare_gedai(BIDS, opts)
+function failures = bidsfun_hp_zap_cleanline(BIDS, opts)
 % RUN_FILTER_BIDS  Preprocess BIDS EEG files: import, resample, DC removal, bad
 %   channel removal, Zapline.
 %   Results are saved as EEGLAB .set files under
@@ -7,8 +7,8 @@ function failures = bidsfun_prepare_gedai(BIDS, opts)
 %   are dropped here, and only urchanlocs says which ones to interpolate back.
 %
 % USAGE:
-%   bidsfun_prepare_gedai(BIDS)
-%   bidsfun_prepare_gedai(BIDS, subjectfilter={'sub-xxx'}, refresh=true)
+%   bidsfun_hp_zap_cleanline(BIDS)
+%   bidsfun_hp_zap_cleanline(BIDS, subjectfilter={'sub-xxx'}, refresh=true)
 %
 % INPUTS:
 %   BIDS   — bids.layout object
@@ -98,7 +98,7 @@ if isempty(opts.figpath),  opts.figpath  = fullfile(BIDS.pth, 'derivatives', opt
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
     'task', opts.tasklabel, 'acq', opts.acqlabel);
 if isempty(filesEEG)
-    error('bidsfun_prepare_gedai:noFiles', 'No matching EEG files found in BIDS layout.');
+    error('bidsfun_hp_zap_cleanline:noFiles', 'No matching EEG files found in BIDS layout.');
 end
 
 %%% Loop over EEG files

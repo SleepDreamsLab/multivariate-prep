@@ -102,21 +102,15 @@ if signal.srate > 100
     for c=signal.nbchan:-1:1
         X(:,c) = filtfilt(B,1,signal.data(c,:)'); end
     % determine z-scored level of EM noise-to-signal ratio for each channel
-    % LOCAL CHANGE: the denominator is the typical channel's low-frequency amplitude, not
-    % each channel's own. Upstream's per-channel ratio conflates "this channel has a lot
-    % of mains" with "this channel has little EEG", and on a high-density net the second
-    % reading dominates: the electrodes around the reference lose most of their signal to
-    % the average reference (their topography is closest to the global mean that gets
-    % subtracted), so their denominator collapses and they take over the top of the
-    % distribution. Measured on sub-drop0001/ses-t5 the three largest znoise values in the
-    % montage - 41.2, 36.8, 32.1 - were all vertex-ring channels, against a p95 of 2.0
-    % elsewhere, so no threshold could separate them from the genuinely noisy ones.
-    % A common denominator also matches what the criterion is used for here: these
-    % channels are dropped so their mains cannot bias the spatial filter Zapline
-    % estimates from the channel covariance, and that depends on absolute line-noise
-    % amplitude rather than on the ratio to the channel's own EEG. Side benefit: a dead
-    % channel now yields 0/positive = 0 instead of 0/0 = NaN.
-    noisiness = mad(signal.data'-X)./median(mad(X,1));
+    % TRIED AND REJECTED: dividing by median(mad(X,1)) - the typical channel's
+    % low-frequency amplitude - instead of by each channel's own, on the theory that the
+    % vertex electrodes were being flagged for having little EEG rather than much mains.
+    % They are not: with the denominator removed entirely the same three channels still
+    % topped the montage on sub-drop0001, and by more (100/81/70 vs 41/37/32), while the
+    % flagged count rose from 13 to 19. Those electrodes genuinely carry far more >45 Hz
+    % energy than the rest of the head - plausibly because the net's lead bundle exits at
+    % the vertex - so no denominator and no threshold can separate them. Kept upstream.
+    noisiness = mad(signal.data'-X)./mad(X,1);
     znoise = (noisiness - median(noisiness)) ./ (mad(noisiness,1)*1.4826);        
     % trim channels based on that
     noise_mask = znoise > noise_threshold;
