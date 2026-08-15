@@ -55,6 +55,11 @@ function failures = bidsfun_run_gedai(BIDS, opts)
 %   runs              Cell array of GEDAI run-config structs. Default: gedai.defaultRuns().
 %   epochstoplot      Epoch indices for diagnostic figures. Default: auto.
 %   prefix            Prefix prepended to the run savename. Default: ''.
+%   dilaten           Epochs by which N2/N3/REM grow into neighbouring Wake/N1 epochs
+%                     before killN1, so a boundary epoch holding real slow waves is
+%                     cleaned as sleep rather than as wake. 0 disables. Default: 1.
+%   dilatedirection   'forward' (default), 'backward' or 'both' - which side of a sleep
+%                     run is claimed. See gedai.dilateStages.
 %   pooltype          'Processes' (default) or 'Threads' for GEDAI's band loop. Threads
 %                     share the broadcast data instead of copying it to every worker,
 %                     which is where ~10% of pipeline runtime goes, but they also share
@@ -101,6 +106,8 @@ arguments
     opts.epochstoplot             = []
     opts.prefix            char   = ''
     opts.pooltype {mustBeMember(opts.pooltype, {'Processes', 'Threads'})} = 'Processes'
+    opts.dilaten (1,1) double {mustBeInteger, mustBeNonnegative} = 1
+    opts.dilatedirection {mustBeMember(opts.dilatedirection, {'both','forward','backward'})} = 'forward'
 end
 
 if isempty(opts.inputpath), opts.inputpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
@@ -216,8 +223,15 @@ for ifile = 1:numel(filesEEG)
         % continue
     end
 
-    %%% Replace isolated N1 epochs at stage boundaries
-    scoringDigits_NoN1 = gedai.killN1(scoringDigits);
+    %%% Grow the sleep stages into the following epoch, then resolve N1.
+    %%% Scoring labels a whole 30-s epoch, so the epoch after a sleep run can still hold
+    %%% genuine slow waves; cleaning it as Wake risks removing them. Done before killN1
+    %%% so that an N1 epoch touching sleep is claimed by that sleep stage first, which
+    %%% also shifts killN1's split of any longer N1 run one epoch towards sleep.
+    %%% Cleaning-time only - scoringDigits itself is untouched.
+    [scoringDilated, nDilated] = gedai.dilateStages(scoringDigits, ...
+        'n', opts.dilaten, 'direction', opts.dilatedirection);
+    scoringDigits_NoN1 = gedai.killN1(scoringDilated);
 
     %%% Bad channels
     %%% Detected and removed by bidsfun_hp_zap_cleanline before Zapline, where clean_channels
@@ -325,6 +339,8 @@ for ifile = 1:numel(filesEEG)
             rJson = rmfield(r, {'GEDAIMode_dict', 'GEDAIModeBB_dict'});
             rJson.GEDAIMode_resolved   = GEDAIMode_perStage;
             rJson.GEDAIModeBB_resolved = GEDAIModeBB_perStage;
+            rJson.StageDilation = struct('n', opts.dilaten, ...
+                'direction', opts.dilatedirection, 'nEpochsRelabelled', nDilated);
             sidecarjson(KeepTime, ...
                 fullfile(gedaiRunDir, [bvBase '.json']), ...
                 struct('GEDAIParameters', rJson));
