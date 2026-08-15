@@ -44,7 +44,7 @@ fig = figure('Color', 'w', 'Units', 'centimeters', ...
     'Name', 'GEDAI evaluation — PSD by sleep stage');
 tiledlayout(nScales, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-tileLabels = {'before GEDAI', 'after GEDAI'};
+tileLabels = {'before', 'after'};
 PwrBoth    = {PwrRaw,    PwrClean};
 FreqsBoth  = {FreqsRaw,  FreqsClean};
 fMaskBoth  = {fMaskRaw,  fMaskClean};
