@@ -16,7 +16,7 @@ acqlabel = '';
 refresh = false;
 targetsrate = 250;
 removeDC = false;
-derivfolder = 'prep-ged-opt';
+derivfolder = 'prep-ged-ica';
 scoringpath = fullfile(BIDS.pth, '..\derivatives\scores\final');
 leadfieldpath = '\\vs03.herseninstituut.knaw.nl\VS03-SandD-4\PM\Data_Analysis\Brainstorm_db\DROP_Leadfields2\data';
 BIDS.description = []; BIDS.description.Name = 'DROP';
@@ -26,7 +26,7 @@ BIDS.description = []; BIDS.description.Name = 'DROP';
 % re-detection, and re-detecting does not invalidate the filtered files.
 badchandesc = 'hp';
 filtdesc    = 'hpzc';
-geddesc     = 'hpzcgedthrpar';
+geddesc     = 'hpzcged';
 subjects    = {'sub-drop0001'};
 sessions    = {'ses-t1', 'ses-t2', 'ses-t3', 'ses-t4', 'ses-t5'};
 
@@ -78,7 +78,6 @@ for ises = 1:numel(sessions)
     % *** GEDAI
     r = gedai.defaultRuns();
     fails.gedai = bidsfun_run_gedai(BIDS, ...
-        'PoolType', 'Processes', ...
         'RunMode', 'StageSpecific', ...
         'runs', r, ...
         'acqlabel', acqlabel, ...
