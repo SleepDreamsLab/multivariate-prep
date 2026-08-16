@@ -15,7 +15,15 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %   -----------
 %   filteredpath      Root of the filtered derivatives.
 %                     Default: <BIDS root>/derivatives/prep-ged
-%   filtdesc          desc label for the filtered filename. Default: 'filt'
+%   filtdesc          desc label of the "after" file, and of the figure folder.
+%                     Default: 'filt'
+%   beforedesc        desc label of the "before" file. '' (default) uses the raw BIDS
+%                     recording; set it to compare two derivatives - e.g. beforedesc the
+%                     filtered data and filtdesc the GEDAI output, which reproduces what
+%                     bidsfun_run_gedai plots internally.
+%   avgref            average-reference both recordings before plotting. Match the stage
+%                     being reproduced: bidsfun_run_gedai re-references before GEDAI,
+%                     bidsfun_hp_zap_cleanline does not. Default: false
 %   scoringpath       Directory containing sleep-scoring files.
 %                     Default: <BIDS root>/derivatives/scoring/scores/Manual_Checked
 %   sfppath           Path passed to the SFP resolver. Default: <BIDS root>
@@ -57,7 +65,9 @@ arguments
     %--- Input paths ---
     opts.filteredpath     char = ''
     opts.filtdesc         char = 'filt'
+    opts.beforedesc       char = ''
     opts.filtfileext      char = '.set'
+    opts.avgref (1,1)     logical = false
     opts.scoringpath      char = []
     opts.sfppath          char = BIDS.pth
 
@@ -155,8 +165,22 @@ for ifile = 1:numel(filesEEG)
     scoringDigits = scoreloader(scoringFile);
 
     %%% Import raw EEG
-    fprintf('Importing raw EEG ...\n')
-    EEGraw = eeg_import(rawFile);    
+    %%% The "before" recording: the raw BIDS file by default, or another derivative when
+    %%% beforedesc is set - which is what lets this stage produce the GEDAI comparison
+    %%% (before = the filtered input, after = the GEDAI output) and not only raw-vs-filtered.
+    if isempty(opts.beforedesc)
+        fprintf('Importing raw EEG ...\n')
+        EEGraw = eeg_import(rawFile);
+    else
+        beforeFile = fullfile(opts.filteredpath, subDir, ...
+            [fileID '_desc-' opts.beforedesc '_eeg' opts.filtfileext]);
+        if ~isfile(beforeFile)
+            fprintf('[skip] before file not found: %s\n', beforeFile)
+            continue
+        end
+        fprintf('Before → %s\n', beforeFile)
+        EEGraw = eeg_import(beforeFile);
+    end
 
     %%% Correct scoring length if needed
     nEpochs = floor(EEGraw.pnts / (opts.epochlength * EEGraw.srate));
@@ -175,10 +199,16 @@ for ifile = 1:numel(filesEEG)
         chanlocs = register_fiducials(readlocs(sfpFile));
     end
         
-    %%% Extract channels
+    %%% Extract channels. Coordinates come from the file when it carries them - a
+    %%% derivative .set does, and after bad channel removal channel k is no longer the
+    %%% k-th SFP entry, so overwriting would mislabel every channel. Otherwise fall back
+    %%% to the SFP, which assumes the full montage in SFP order.
     EEGraw = pop_select(EEGraw, 'nochannel', intersect(1:EEGraw.nbchan, opts.noteegchannels));
-    EEGraw.chanlocs   = chanlocs(1:EEGraw.nbchan);
-    EEGraw.urchanlocs = EEGraw.chanlocs;
+    if ~isfield(EEGraw, 'chanlocs') || isempty(EEGraw.chanlocs) || ...
+            ~isfield(EEGraw.chanlocs, 'X') || isempty([EEGraw.chanlocs.X])
+        EEGraw.chanlocs   = chanlocs(1:EEGraw.nbchan);
+        EEGraw.urchanlocs = EEGraw.chanlocs;
+    end
 
     %%% Import filtered EEG
     fprintf('Importing filtered EEG ...\n')
@@ -195,6 +225,16 @@ for ifile = 1:numel(filesEEG)
         %%% Legacy input with no stored coordinates: assume the full montage, SFP order
         EEGfilt.chanlocs   = chanlocs(1:EEGfilt.nbchan);
         EEGfilt.urchanlocs = EEGfilt.chanlocs;
+    end
+
+    %%% Average reference, when asked. bidsfun_run_gedai re-references before it runs
+    %%% GEDAI, so its figures are of average-referenced data; set avgref to match when
+    %%% reproducing that comparison, or the two stages' figures sit on different
+    %%% baselines. Same formula as there - the +1 counts the implicit reference channel.
+    if opts.avgref
+        fprintf('Average-referencing both recordings ...\n')
+        EEGraw.data  = EEGraw.data  - sum(EEGraw.data,  1) / (size(EEGraw.data,  1) + 1);
+        EEGfilt.data = EEGfilt.data - sum(EEGfilt.data, 1) / (size(EEGfilt.data, 1) + 1);
     end
 
     %%% Evaluate

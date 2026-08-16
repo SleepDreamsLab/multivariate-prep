@@ -106,6 +106,7 @@ arguments
     opts.epochstoplot             = []
     opts.prefix            char   = ''
     opts.pooltype {mustBeMember(opts.pooltype, {'Processes', 'Threads'})} = 'Processes'
+    opts.evalplots (1,1) logical = true
     opts.dilaten (1,1) double {mustBeInteger, mustBeNonnegative} = 1
     opts.dilatedirection {mustBeMember(opts.dilatedirection, {'both','forward','backward'})} = 'forward'
 end
@@ -237,11 +238,17 @@ for ifile = 1:numel(filesEEG)
     %%% Detected and removed by bidsfun_hp_zap_cleanline before Zapline, where clean_channels
     %%% can still see the line noise its noise criterion is based on. The mask is only
     %%% needed here to select the matching rows of the leadfield.
-    badchanFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.badchandesc '_badchans.mat']);
+    %%% Keyed to inputdesc, not badchandesc: bidsfun_hp_zap_cleanline may remove further
+    %%% channels for residual line noise and rewrites the mask next to the .set it saves,
+    %%% so the file carrying this desc is the one that describes the data being loaded.
+    badchanFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.inputdesc '_badchans.mat']);
+    if ~isfile(badchanFile)
+        badchanFile = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.badchandesc '_badchans.mat']);
+    end
     if ~isfile(badchanFile)
         error('bidsfun_run_gedai:noBadChannels', ...
-            ['Bad channel file not found (%s). Run bidsfun_detect_badchans for this ' ...
-             'recording first.'], badchanFile);
+            ['Bad channel file not found (%s). Run bidsfun_detect_badchans and ' ...
+             'bidsfun_hp_zap_cleanline for this recording first.'], badchanFile);
     end
     fprintf('Badchans → %s\n', badchanFile)
     removed_channels = getfield(load(badchanFile, 'removed_channels'), 'removed_channels');
@@ -346,14 +353,18 @@ for ifile = 1:numel(filesEEG)
                 struct('GEDAIParameters', rJson));
         end
 
-        %%% Evaluation figures
+        %%% Evaluation figures. Optional: bidsfun_evalfigs can produce the same
+        %%% comparison as a separate stage, which is the better route when the figures
+        %%% are being re-made without re-running GEDAI.
+        if opts.evalplots
         if ~exist(gedaiFigDir, 'dir'), mkdir(gedaiFigDir); end
         run.eval_clean(EEG, EEGgedai, scoringDigits_NoN1, ...
             'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
             'EpochsToPlot', epochsToPlot, 'refresh', opts.refresh, ...
             'net', opts.net, 'SavePath', fullfile(gedaiFigDir, fileID));
         pause(1)
-        close all;       
+        close all;
+        end
         
 %         %%% Write savename marker
 %         sidecarjson(KeepTime, ...
@@ -361,7 +372,7 @@ for ifile = 1:numel(filesEEG)
 %             struct('GEDAIParameters', r));
 
         %%% ICA residual
-        if isfield(EEGgedai.etc, 'ic_classification')
+        if opts.evalplots && isfield(EEGgedai.etc, 'ic_classification')
             EEGgedai = ica.selectcomps(EEGgedai, 'ArtefactThreshold', 0.5, 'ManualQC', false);
             EEGgedai = pop_subcomp(EEGgedai, find(EEGgedai.reject.gcompreject), 0);
             run.eval_clean(EEG, EEGgedai, scoringDigits_NoN1, ...
