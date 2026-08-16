@@ -179,7 +179,12 @@ for iGroup = 1:nGroups
     %%% are far more blocks than the 11 wavelet bands, and they are equal-sized, so extra
     %%% workers keep earning instead of idling. (The band-count cap that used to live
     %%% here applied to parallel = true, where the loop had one task per band.)
-    MAX_WORKERS = 30;
+    %%% The ceiling is now whatever the local cluster profile allows. Inf does not work:
+    %%% the memory formula below can exceed the profile's NumWorkers, and parpool errors
+    %%% when asked for more workers than the cluster has. Raise it in the Parallel
+    %%% preferences ("Processes" profile) if you want more than this reports.
+    localCluster = parcluster('Processes');
+    MAX_WORKERS  = localCluster.NumWorkers;
 
     LOAD_NOW = EEGstageGroup.pnts * EEGstageGroup.nbchan;
     perWorkerBytes = LOAD_NOW * BYTES_PER_SAMPLE_CH;
@@ -212,7 +217,7 @@ for iGroup = 1:nGroups
         if wantThreads
             parpool('Threads', nWorkers);
         else
-            c = parcluster('Processes');
+            c = localCluster;       % same object the worker cap was read from
             oldNT = c.NumThreads;
             c.NumThreads = 1;
             parpool(c, nWorkers);
