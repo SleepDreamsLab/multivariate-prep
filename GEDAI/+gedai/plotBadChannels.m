@@ -33,16 +33,16 @@ function plotBadChannels(corr, znoise, chanlocs, savefile, flatprop, params)
     %%% is invisible to the other two), then correlation, then line noise.
     if ~isempty(flatprop)
         nexttile();
-        drawTopo(flatprop, chanlocs, flatprop > flatTh, [0 1]);
+        drawTopoPanel(flatprop, chanlocs, flatprop > flatTh, [0 1]);
         title({'Prop. of recording', sprintf('flat  (marked > %g)', flatTh)});
     end
 
     nexttile();
-    drawTopo(lowcorrprop, chanlocs, lowcorrprop > brokenTh, [0 .8]);
+    drawTopoPanel(lowcorrprop, chanlocs, lowcorrprop > brokenTh, [0 .8]);
     title({'Prop. of recording', sprintf('with corr < %g  (marked > %g)', corrTh, brokenTh)});
 
     nexttile();
-    drawTopo(znoise, chanlocs, znoise > noiseTh, [0 10]);
+    drawTopoPanel(znoise, chanlocs, znoise > noiseTh, [0 10]);
     if isfinite(noiseTh)
         title({'Line noise', sprintf('(removed at z > %g)', noiseTh)});
     else
@@ -51,22 +51,8 @@ function plotBadChannels(corr, znoise, chanlocs, savefile, flatprop, params)
 
     colormap('gray');
     set(gcf, 'Color', 'w', 'Units', 'centimeters', 'Position', [2 2 10*nTiles 10]);
-    print(gcf, savefile, '-dpng', '-r100');
+    gedai.printFigure(gcf, savefile);
     close
-end
-
-% -------------------------------------------------------------------------
-function drawTopo(vals, chanlocs, hilite, cl)
-% One panel: every electrode as a small rose dot, the ones over threshold in red.
-% emarker2 is only added when something is above threshold - topoplot does not accept an
-% empty highlight list.
-    args = {'numcontour', 0, 'electrodes', 'on', 'emarker', {'.', [1 0.45 0.6], 3, 1}};
-    idx  = find(hilite);
-    if ~isempty(idx)
-        args = [args, {'emarker2', {idx, '.', 'r', 10}}];
-    end
-    topoplot(vals, chanlocs, args{:});
-    colorbar(); caxis(cl);
 end
 
 % -------------------------------------------------------------------------

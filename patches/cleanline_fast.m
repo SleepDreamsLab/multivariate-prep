@@ -173,8 +173,29 @@ end
 if isempty(pool)
     try
         pool = parpool;
-    catch
-        pool = [];      % no Parallel Computing Toolbox: parfor runs serially
+        % The next recording spends ~18 min in Zapline with no parfor in sight, which is
+        % long enough for the default IdleTimeout to reap this pool; the stage after it
+        % then pays the startup again. Repeated 30-worker startup and teardown is also
+        % what precedes the failures where only some workers ever connect, so keep the
+        % pool alive across recordings instead of rebuilding it for each one.
+        try
+            pool.IdleTimeout = max(pool.IdleTimeout, 240);
+        catch
+        end
+    catch ME
+        % No Parallel Computing Toolbox, or the pool would not come up - asking for the
+        % machine's full worker count, parpool can sit at "Connected to 27 of 30 workers"
+        % for twenty minutes and then give up. Half a pool beats the serial fallback,
+        % which for 250 channels is the difference between minutes and hours.
+        fprintf('cleanline_fast: parpool failed (%s); retrying with fewer workers.\n', ...
+            ME.message);
+        try
+            cl   = parcluster;
+            pool = parpool(cl, max(4, floor(cl.NumWorkers / 2)));
+        catch ME2
+            fprintf('cleanline_fast: still no pool (%s); running serially.\n', ME2.message);
+            pool = [];
+        end
     end
 end
 if isempty(pool)
@@ -182,6 +203,12 @@ if isempty(pool)
 else
     perRound = pool.NumWorkers;
 end
+
+% parfor's worker limit, NOT the number of workers to ask for. Zero forces the loop to
+% run in the client. Without it a bare parfor creates a pool of its own whenever none is
+% running, so the catch above buys nothing: the same pool that just failed to start gets
+% requested again, and the second attempt queues indefinitely rather than erroring.
+if isempty(pool), nWork = 0; else, nWork = pool.NumWorkers; end
 if g.perround > 0
     perRound = g.perround;      % lower this if a round does not fit in RAM
 end
@@ -212,7 +239,7 @@ for r = 1:perRound:nb
     bl   = blocks(rb);          % sliced, so the workers can name their channels
     verb = g.verbose;
 
-    parfor j = 1:numel(rb)
+    parfor (j = 1:numel(rb), nWork)
         x = in{j};
         if g.sigtest
             datac = removelines_gated(x, movingwin, g.tau, params, g.p, ...
