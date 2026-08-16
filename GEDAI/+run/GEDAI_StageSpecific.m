@@ -167,7 +167,16 @@ for iGroup = 1:nGroups
     %    clean_EEG's output buffering changes again.
     BYTES_PER_SAMPLE_CH = 8 * 16;   % 8 B double x ~16 working copies
     SAFETY              = 1.00;      % leave headroom for client + OS cache
-    MAX_WORKERS         = 12;
+    %%% One worker per wavelet band, no more. GEDAI's band loop is
+    %%% "parfor f = 1:num_bands_to_process", so extra workers get no iterations while
+    %%% still costing a full broadcast copy of this stage's data - and with dispatch
+    %%% already ~36% of GEDAI's runtime that is not free. Going the other way is worse:
+    %%% fewer workers than bands means a second round, so the loop nearly doubles.
+    %%% Derivation mirrors GEDAI.m lines 674-705; re-check it if that changes.
+    nBands      = ceil(log2(EEGstageGroup.srate / opts.GEDAILowCutOffFreq));
+    nBands      = max(min(nBands, floor(log2(EEGstageGroup.pnts))), 6);
+    upperF      = EEGstageGroup.srate ./ 2.^(1:nBands);
+    MAX_WORKERS = max(1, nBands - sum(upperF <= opts.GEDAILowCutOffFreq));
 
     LOAD_NOW = EEGstageGroup.pnts * EEGstageGroup.nbchan;
     perWorkerBytes = LOAD_NOW * BYTES_PER_SAMPLE_CH;
