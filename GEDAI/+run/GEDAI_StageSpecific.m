@@ -161,22 +161,25 @@ for iGroup = 1:nGroups
     %                   costs (broadcast copy, MODWT scratch, clean_EEG's
     %                   output buffers) dominate instead — hence no strong
     %                   per-band variation left to calibrate against.
-    %    16x carries ~5% headroom over the measured ceiling; the pre-existing
+    %    16x carried ~5% headroom over that measured ceiling; the pre-existing
     %    SAFETY factor below covers the rest. Re-measure if channel count,
     %    MODWT extraction (e.g. porting stateful_modwt_single_band), or
     %    clean_EEG's output buffering changes again.
-    BYTES_PER_SAMPLE_CH = 8 * 16;   % 8 B double x ~16 working copies
+    %
+    %    Halved to 8x on switching GEDAI to parallel = 'blocks'. The 15-16x
+    %    figure was dominated by each worker holding a whole band; under block
+    %    parallelism a worker holds one time block instead, so the per-worker
+    %    peak is a fraction of the band. 8x is a deliberately conservative
+    %    stand-in for that - it has NOT been measured the way the 15.2x was, so
+    %    if a night starts swapping this is the first number to re-measure.
+    BYTES_PER_SAMPLE_CH = 8 * 8;    % 8 B double x ~8 working copies (blocks)
     SAFETY              = 1.00;      % leave headroom for client + OS cache
-    %%% One worker per wavelet band, no more. GEDAI's band loop is
-    %%% "parfor f = 1:num_bands_to_process", so extra workers get no iterations while
-    %%% still costing a full broadcast copy of this stage's data - and with dispatch
-    %%% already ~36% of GEDAI's runtime that is not free. Going the other way is worse:
-    %%% fewer workers than bands means a second round, so the loop nearly doubles.
-    %%% Derivation mirrors GEDAI.m lines 674-705; re-check it if that changes.
-    nBands      = ceil(log2(EEGstageGroup.srate / opts.GEDAILowCutOffFreq));
-    nBands      = max(min(nBands, floor(log2(EEGstageGroup.pnts))), 6);
-    upperF      = EEGstageGroup.srate ./ 2.^(1:nBands);
-    MAX_WORKERS = max(1, nBands - sum(upperF <= opts.GEDAILowCutOffFreq));
+    %%% GEDAI is called with parallel = 'blocks', so the band loop runs serially and the
+    %%% parfor is over time blocks within each band. That removes the old ceiling: there
+    %%% are far more blocks than the 11 wavelet bands, and they are equal-sized, so extra
+    %%% workers keep earning instead of idling. (The band-count cap that used to live
+    %%% here applied to parallel = true, where the loop had one task per band.)
+    MAX_WORKERS = 30;
 
     LOAD_NOW = EEGstageGroup.pnts * EEGstageGroup.nbchan;
     perWorkerBytes = LOAD_NOW * BYTES_PER_SAMPLE_CH;
@@ -232,7 +235,7 @@ for iGroup = 1:nGroups
     [EEGcleanGroup, ~, SENSAI_score, SENSAI_score_per_band, ...
         artifact_threshold_per_band, mean_ENOVA, ENOVA_per_epoch] = ...
         GEDAI(EEGstageGroup, gedaiMode, gedaiModeBB, opts.GEDAIEpochSize, ...
-              opts.GEDAILowCutOffFreq, gedaiRefMatrix, true, 0, [], opts.GEDAIEnovaChannelThreshold, [], ...
+              opts.GEDAILowCutOffFreq, gedaiRefMatrix, 'blocks', 0, [], opts.GEDAIEnovaChannelThreshold, [], ...
               opts.MovAvgSize, opts.BBEpochSize, opts.BroadbandOnly, opts.PercentileThreshold, opts.BBMinThreshold, opts.ComputeSENSAI);
     gedaiTime = gedaiTime + toc(D);
 
