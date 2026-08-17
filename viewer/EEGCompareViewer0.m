@@ -19,9 +19,12 @@ scoringFile = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\de
 net = 'EGI256'; % net type, passed to chans1020
 plotDecimation = 5; % only plot every Nth sample (display only; does not affect underlying data)
 
+% Set file2 = '' to open file1 on its own. Worth doing when file1 carries an
+% ICA decomposition: the viewer's "Subtract ICs" overlay then supplies the
+% second trace to compare against.
+
 %% ===================== IMPORT + PREP =====================
 EEG1 = fast_eeg_import(file1);
-EEG2 = fast_eeg_import(file2);
 
 scoringDigits = [];
 if ~isempty(scoringFile)
@@ -32,6 +35,11 @@ end
 EEG1.data = EEG1.data - sum(EEG1.data, 1) / (size(EEG1.data, 1) + 1);
 
 [EEG1, chanmap] = chans1020(EEG1, false, 'add_eog', true, 'net', net, 'chanprefix', 'E');
-[EEG2, chanmap] = chans1020(EEG2, false, 'add_eog', true, 'net', net, 'chanprefix', 'E');
+
+EEG2 = [];
+if ~isempty(file2)
+    EEG2 = fast_eeg_import(file2);
+    [EEG2, chanmap] = chans1020(EEG2, false, 'add_eog', true, 'net', net, 'chanprefix', 'E');
+end
 
 viewer.eegCompareViewer(EEG1, EEG2, scoringDigits, file1, file2, plotDecimation, fieldnames(chanmap));

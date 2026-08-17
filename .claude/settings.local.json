@@ -15,7 +15,14 @@
       "Bash(.venv/Scripts/python.exe -c ' *)",
       "WebFetch(domain:eeglab.org)",
       "Bash(./.venv/Scripts/python -c ' *)",
-      "Bash(./.venv/Scripts/python -m py_compile run-pamica.py run-pamica-raw.py)"
+      "Bash(./.venv/Scripts/python -m py_compile run-pamica.py run-pamica-raw.py)",
+      "Bash(git mv *)",
+      "Bash(matlab -batch \"checkcode\\('viewer/+viewer/eegCompareViewer.m'\\)\")",
+      "Bash(matlab -batch \"checkcode\\('viewer/+viewer/eegCompareViewer.m'\\); disp\\('--- pickerDialog ---'\\); checkcode\\('viewer/+viewer/pickerDialog.m'\\); disp\\('--- scripts ---'\\); checkcode\\('viewer/EEGCompareViewer0.m'\\)\")",
+      "Bash(matlab -batch \"test_viewer\")",
+      "Bash(matlab -batch \"test_picker\")",
+      "Bash(taskkill //F //IM MATLAB.exe)",
+      "Bash(echo \"EXIT=$?\")"
     ]
   }
 }

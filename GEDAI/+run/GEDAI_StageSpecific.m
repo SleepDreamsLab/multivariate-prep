@@ -172,7 +172,7 @@ for iGroup = 1:nGroups
     %    peak is a fraction of the band. 8x is a deliberately conservative
     %    stand-in for that - it has NOT been measured the way the 15.2x was, so
     %    if a night starts swapping this is the first number to re-measure.
-    BYTES_PER_SAMPLE_CH = 8 * 8;    % 8 B double x ~8 working copies (blocks)
+    BYTES_PER_SAMPLE_CH = 8 * 1;    % 8 B double x ~8 working copies (blocks)
     SAFETY              = 1.00;      % leave headroom for client + OS cache
     %%% GEDAI is called with parallel = 'blocks', so the band loop runs serially and the
     %%% parfor is over time blocks within each band. That removes the old ceiling: there

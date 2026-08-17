@@ -70,10 +70,11 @@ end
 file1 = fname1;
 file2 = [fname1 ' + ICA'];
 
-[EEG1, chanmap] = chans1020(EEG1, false, 'add_eog', true, 'net', net, 'chanprefix', 'E');
-[EEG2, chanmap] = chans1020(EEG2, false, 'add_eog', true, 'net', net, 'chanprefix', 'E');
+% [EEG1, chanmap] = chans1020(EEG1, false, 'add_eog', true, 'net', net, 'chanprefix', 'E');
+% [EEG2, chanmap] = chans1020(EEG2, false, 'add_eog', true, 'net', net, 'chanprefix', 'E');
+[EEG, chanmap] = chans1020(EEG, false, 'add_eog', true, 'net', net, 'chanprefix', 'E');
 
-viewer.eegCompareViewer(EEG1, EEG2, scoringDigits, file1, file2, plotDecimation, fieldnames(chanmap));
+viewer.eegCompareViewer(EEG, [], scoringDigits, file1, file2, plotDecimation, fieldnames(chanmap));
 
 
 
