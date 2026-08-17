@@ -54,6 +54,6 @@ xlabel('hours into recording')
 title({opts.title, sprintf(['%d flagged (*), %d retained channels shown for reference; ' ...
     'brighter = worse'], numel(flag), numel(good))}, 'Interpreter', 'none')
 
-print(gcf, savefile, '-dpng', '-r100');
+gedai.printFigure(gcf, savefile);
 close
 end

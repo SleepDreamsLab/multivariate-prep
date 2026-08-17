@@ -128,7 +128,14 @@ for ifile = 1:numel(filesEEG)
     outDir   = fullfile(opts.savepath, subDir);
     outFile  = fullfile(outDir, [fileID '_desc-' opts.desc '_eeg' opts.savefileext]);
     figDir   = fullfile(opts.figpath, ['desc-' opts.desc], subDir);
+    %%% The second detection round's figure goes where the first round's already is, so
+    %%% the two topoplots of the same recording sit side by side; the desc in the filename
+    %%% keeps them apart.
+    bcFigDir = fullfile(opts.figpath, 'badchans', subDir);
     if ~exist(figDir, 'dir'), mkdir(figDir); end
+    if opts.badchannels && opts.residuallinenoise && ~exist(bcFigDir, 'dir')
+        mkdir(bcFigDir);
+    end
     fprintf('Output → %s\n', outFile)
 
     %%% Skip if already processed and refresh not requested
@@ -213,7 +220,7 @@ for ifile = 1:numel(filesEEG)
 
     if opts.plotResults
         nm = strrep(get(gcf, 'Name'), ' ', '_');
-        print(gcf, fullfile(figDir, [fileID '_zapline_' nm '.png']), '-dpng', '-r100');
+        gedai.printFigure(gcf, fullfile(figDir, [fileID '_zapline_' nm '.png']));
         pause(3); close(gcf);
     end
 
@@ -236,7 +243,7 @@ for ifile = 1:numel(filesEEG)
     end
     if opts.plotResults & opts.zapline2
         nm = strrep(get(gcf, 'Name'), ' ', '_');
-        print(gcf, fullfile(figDir, [fileID '_zapline2_' nm '.png']), '-dpng', '-r100');
+        gedai.printFigure(gcf, fullfile(figDir, [fileID '_zapline2_' nm '.png']));
         pause(3); close(gcf);
     end
 
@@ -269,6 +276,16 @@ for ifile = 1:numel(filesEEG)
         EEG.etc.filterparams.BadChannels.nRemovedResidual        = nnz(resMask);
         EEG.etc.filterparams.BadChannels.nRemoved                = nnz(fullMask);
 
+        %%% Topoplot of this round, in the montage as recorded so it can be laid next to
+        %%% the first-round figure electrode for electrode. Channels the first round
+        %%% already took are NaN: they have no residual value, and inventing one for them
+        %%% would smear the two rounds together.
+        zFull          = nan(numel(EEG.urchanlocs), 1);
+        zFull(keptIdx) = resZnoise(:);
+        gedai.plotLineNoiseZ(zFull, EEG.urchanlocs, ...
+            fullfile(bcFigDir, [fileID '_desc-' opts.desc '_ResidualLineNoiseTopoplot.png']), ...
+            'threshold', opts.residualznoise, 'title', fileID);
+
         %%% Written next to the .set under this stage's desc, so the mask that describes
         %%% the saved data always sits beside it. bidsfun_run_gedai reads this one.
         removed_channels = fullMask;                                        %#ok<NASGU>
@@ -290,15 +307,42 @@ for ifile = 1:numel(filesEEG)
         pop_writebva(EEG, outFile, 'DataOrientation', 'MULTIPLEXED');
     end
 
-    %%% JSON sidecar: timings plus the parameters each step actually ran with.
+    %%% JSON sidecars: timings plus the parameters each step actually ran with.
     %%% The structs are built by run.run_filter next to the calls that consume them, so
     %%% what is recorded here cannot drift from what was applied.
     [~, baseName] = fileparts(outFile);
     prepParams = struct();
     if isfield(EEG.etc, 'filterparams'), prepParams = EEG.etc.filterparams; end
-    %%% The bad channel settings belong to bidsfun_detect_badchans and are already in its
-    %%% sidecar; a second copy here could only ever drift from the mask actually applied.
-    if isfield(prepParams, 'BadChannels'), prepParams = rmfield(prepParams, 'BadChannels'); end
+
+    %%% Everything about bad channels goes to the badchans sidecar rather than this one,
+    %%% so the mask, the figure and the settings that produced them are described in one
+    %%% file. This stage's JSON is about filtering.
+    bcParams = struct();
+    if isfield(prepParams, 'BadChannels')
+        bcParams   = prepParams.BadChannels;
+        prepParams = rmfield(prepParams, 'BadChannels');
+    end
+    bcKeys   = intersect(fieldnames(KeepTime), ...
+        {'FlatChannelDetection', 'BadChannelDetection', 'ResidualLineNoiseDetection'});
+    bcTime   = struct();
+    for k = 1:numel(bcKeys)
+        bcTime.(bcKeys{k}) = KeepTime.(bcKeys{k});
+    end
+    KeepTime = rmfield(KeepTime, bcKeys);
+
+    if opts.badchannels
+        %%% Which mask the first round came from: this stage loads it rather than
+        %%% detecting, so the sidecar has to name the file that decided it.
+        bcParams.firstRoundDesc    = opts.badchandesc;
+        bcParams.residualLineNoise = opts.residuallinenoise;
+        if opts.residuallinenoise
+            bcParams.residualZnoiseThreshold = opts.residualznoise;
+        end
+        sidecarjson(bcTime, ...
+            fullfile(outDir, [fileID '_desc-' opts.desc '_badchans.json']), ...
+            struct('BadChannelParameters', bcParams));
+    end
+
     prepParams.targetSampleRate = opts.targetsrate;
     prepParams.removeDC         = opts.removeDC;
     prepParams.zeroPatchSeconds = opts.zeropatchseconds;
