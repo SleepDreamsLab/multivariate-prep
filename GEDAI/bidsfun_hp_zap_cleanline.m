@@ -81,8 +81,6 @@ arguments
     %--- Bad channels ---
     opts.badchannels      (1,1) logical  = true
     opts.badchandesc      char           = 'badchan'
-    opts.residuallinenoise (1,1) logical = true
-    opts.residualznoise   (1,1) double   = 4
     opts.badchanavgref    (1,1) logical  = true
     opts.badchanstride    (1,1) double   = 2
     opts.flatthreshold    (1,1) double   = 0.5
@@ -128,14 +126,7 @@ for ifile = 1:numel(filesEEG)
     outDir   = fullfile(opts.savepath, subDir);
     outFile  = fullfile(outDir, [fileID '_desc-' opts.desc '_eeg' opts.savefileext]);
     figDir   = fullfile(opts.figpath, ['desc-' opts.desc], subDir);
-    %%% The second detection round's figure goes where the first round's already is, so
-    %%% the two topoplots of the same recording sit side by side; the desc in the filename
-    %%% keeps them apart.
-    bcFigDir = fullfile(opts.figpath, 'badchans', subDir);
     if ~exist(figDir, 'dir'), mkdir(figDir); end
-    if opts.badchannels && opts.residuallinenoise && ~exist(bcFigDir, 'dir')
-        mkdir(bcFigDir);
-    end
     fprintf('Output → %s\n', outFile)
 
     %%% Skip if already processed and refresh not requested
@@ -149,7 +140,7 @@ for ifile = 1:numel(filesEEG)
 
     %%% Import EEG
     D = tic; fprintf('\nEEG import ...\n')
-    EEG = eeg_import(eegFile);
+    EEG = fast_eeg_import(eegFile);
     KeepTime = struct('EEGimport', toc(D));
 
     %%% Drop non-EEG channels
@@ -157,36 +148,10 @@ for ifile = 1:numel(filesEEG)
     %%% up with the EEG channels (run.run_filter repeats it as a no-op).
     EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
 
-    %%% Read SFP file (dome-solved channel locations)
+    %%% Channel locations
     %%% clean_channels needs coordinates, and .set output carries chanlocs/urchanlocs
     %%% forward so the channels removed below can be interpolated back downstream.
-    if ~isempty(opts.sfppath)
-        sfpFile = gedai.matchSfpFile(opts.sfppath, p.entities.sub, p.entities.ses);
-        fprintf('\nReading %s ...\n', sfpFile)
-        chanlocs     = readlocs(sfpFile);
-        chanlocs_reg = register_fiducials(chanlocs);
-        EEG.chanlocs = chanlocs_reg(1:EEG.nbchan);
-
-        % Urchanlocs
-        EEG.urchanlocs = EEG.chanlocs;
-        for iCh = 1:numel(EEG.chanlocs)
-            EEG.chanlocs(iCh).urchan = iCh;
-        end
-
-    elseif strcmp(BIDS.description.Name, {'ercp'})
-        chanfile = fullfile(fileparts(eegFile), [fileID, '_channels.tsv']);
-        elecfile = fullfile(fileparts(eegFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
-        [EEG, channelData, elecData] = bids_importchanlocs(EEG, chanfile, elecfile);
-
-        % Urchanlocs
-        EEG.urchanlocs = EEG.chanlocs;
-        for iCh = 1:numel(EEG.chanlocs)
-            EEG.chanlocs(iCh).urchan = iCh;
-        end
-
-    else
-        % continue
-    end
+    EEG = gedai.assignChanlocs(EEG, BIDS, opts.sfppath, eegFile, p, fileID);
 
     %%% Bad channel mask, owned by bidsfun_detect_badchans and keyed to its own desc so
     %%% that re-filtering and re-detecting are independent. smartcache loads it when it
@@ -247,52 +212,6 @@ for ifile = 1:numel(filesEEG)
         pause(3); close(gcf);
     end
 
-    %%% Residual line noise, measured AFTER cleaning
-    %%% The pre-Zapline pass answers "how much mains does this channel pick up", which on
-    %%% this net ranks the vertex electrodes highest - real, but Zapline's job, and those
-    %%% channels have intact EEG. This pass asks what Zapline could not fix, which is the
-    %%% thing that warrants removal. Channels are dropped here, before saving, so the
-    %%% file on disk and the mask beside it describe the same montage.
-    if opts.badchannels && opts.residuallinenoise
-        D = tic;
-        [resMask, resZnoise] = gedai.detectLineNoiseChannels(double(EEG.data), EEG.srate, ...
-            'threshold', opts.residualznoise);
-        KeepTime.ResidualLineNoiseDetection = toc(D);
-
-        %%% Lift the mask into the full montage before merging: the first mask is over
-        %%% all 256 channels, this one only over what survived it.
-        keptIdx  = find(~EEG.etc.badchans.mask);
-        fullMask = EEG.etc.badchans.mask(:);
-        fullMask(keptIdx(resMask)) = true;
-
-        if any(resMask)
-            fprintf('Removing %d channel(s) with residual line noise.\n', nnz(resMask))
-            EEG = pop_select(EEG, 'nochannel', find(resMask));
-        end
-
-        EEG.etc.badchans.mask            = fullMask;
-        EEG.etc.badchans.residualZnoise  = resZnoise;
-        EEG.etc.filterparams.BadChannels.residualZnoiseThreshold = opts.residualznoise;
-        EEG.etc.filterparams.BadChannels.nRemovedResidual        = nnz(resMask);
-        EEG.etc.filterparams.BadChannels.nRemoved                = nnz(fullMask);
-
-        %%% Topoplot of this round, in the montage as recorded so it can be laid next to
-        %%% the first-round figure electrode for electrode. Channels the first round
-        %%% already took are NaN: they have no residual value, and inventing one for them
-        %%% would smear the two rounds together.
-        zFull          = nan(numel(EEG.urchanlocs), 1);
-        zFull(keptIdx) = resZnoise(:);
-        gedai.plotLineNoiseZ(zFull, EEG.urchanlocs, ...
-            fullfile(bcFigDir, [fileID '_desc-' opts.desc '_ResidualLineNoiseTopoplot.png']), ...
-            'threshold', opts.residualznoise, 'title', fileID);
-
-        %%% Written next to the .set under this stage's desc, so the mask that describes
-        %%% the saved data always sits beside it. bidsfun_run_gedai reads this one.
-        removed_channels = fullMask;                                        %#ok<NASGU>
-        save(fullfile(outDir, [fileID '_desc-' opts.desc '_badchans.mat']), ...
-            'removed_channels', 'resZnoise');
-    end
-
     %%% Put the all-zero patches back, so the saved file keeps its original length
     EEG = run.restore_zero_patches(EEG);
 
@@ -323,7 +242,7 @@ for ifile = 1:numel(filesEEG)
         prepParams = rmfield(prepParams, 'BadChannels');
     end
     bcKeys   = intersect(fieldnames(KeepTime), ...
-        {'FlatChannelDetection', 'BadChannelDetection', 'ResidualLineNoiseDetection'});
+        {'FlatChannelDetection', 'BadChannelDetection'});
     bcTime   = struct();
     for k = 1:numel(bcKeys)
         bcTime.(bcKeys{k}) = KeepTime.(bcKeys{k});
@@ -333,11 +252,7 @@ for ifile = 1:numel(filesEEG)
     if opts.badchannels
         %%% Which mask the first round came from: this stage loads it rather than
         %%% detecting, so the sidecar has to name the file that decided it.
-        bcParams.firstRoundDesc    = opts.badchandesc;
-        bcParams.residualLineNoise = opts.residuallinenoise;
-        if opts.residuallinenoise
-            bcParams.residualZnoiseThreshold = opts.residualznoise;
-        end
+        bcParams.firstRoundDesc = opts.badchandesc;
         sidecarjson(bcTime, ...
             fullfile(outDir, [fileID '_desc-' opts.desc '_badchans.json']), ...
             struct('BadChannelParameters', bcParams));

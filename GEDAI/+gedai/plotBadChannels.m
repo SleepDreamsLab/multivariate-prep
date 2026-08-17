@@ -14,10 +14,10 @@ function plotBadChannels(corr, znoise, chanlocs, savefile, flatprop, params)
 
     %%% All three panels mark what was actually removed, so every red dot on this figure
     %%% corresponds to a channel missing from the data. That means the line-noise panel
-    %%% keys on noiseThreshold, not on the reporting threshold: with noiseThreshold = Inf
-    %%% the criterion removes nothing and the panel is deliberately unmarked. The
-    %%% channels.tsv still reports which channels are line-noisy, via
-    %%% noiseReportThreshold - that is the place to look for them.
+    %%% keys on noiseThreshold, the same threshold clean_channels used for detection: with
+    %%% noiseThreshold = Inf the criterion removes nothing and the panel is deliberately
+    %%% unmarked. znoise itself still lands in the .mat and channels.tsv, so a
+    %%% pathological channel remains visible even while unmarked.
     corrTh   = fieldOr(params, 'corrThreshold',     0.7);
     brokenTh = fieldOr(params, 'maxBrokenTime',     0.5);
     noiseTh  = fieldOr(params, 'noiseThreshold',    4);

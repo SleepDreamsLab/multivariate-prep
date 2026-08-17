@@ -12,12 +12,6 @@ function failures = bidsfun_detect_badchans(BIDS, opts)
 %   also the step whose output you want to look at - and possibly overrule - before
 %   committing to the expensive stages downstream.
 %
-%   The data detection sees is produced by run.run_filter itself, called with
-%   badchannelsonly, rather than by repeating its drop / resample / excise / DC chain
-%   here. Two of those steps change what gets flagged: an un-excised amplifier dropout
-%   reads as every channel flat at once, and the correlation criterion assumes
-%   high-passed input. One definition, one place.
-%
 % USAGE:
 %   bidsfun_detect_badchans(BIDS)
 %   bidsfun_detect_badchans(BIDS, subjectfilter={'sub-xxx'}, refresh=true)
@@ -116,40 +110,14 @@ for ifile = 1:numel(filesEEG)
 
     %%% Import EEG
     D = tic; fprintf('\nEEG import ...\n')
-    EEG = eeg_import(eegFile);
+    EEG = fast_eeg_import(eegFile);
     KeepTime = struct('EEGimport', toc(D));
 
     %%% Drop non-EEG channels, so the channel locations below line up
     EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
 
-    %%% Read SFP file (dome-solved channel locations); clean_channels needs coordinates
-    if ~isempty(opts.sfppath)
-        sfpFile = gedai.matchSfpFile(opts.sfppath, p.entities.sub, p.entities.ses);
-        fprintf('\nReading %s ...\n', sfpFile)
-        chanlocs     = readlocs(sfpFile);
-        chanlocs_reg = register_fiducials(chanlocs);
-        EEG.chanlocs = chanlocs_reg(1:EEG.nbchan);
-
-        % Urchanlocs
-        EEG.urchanlocs = EEG.chanlocs;
-        for iCh = 1:numel(EEG.chanlocs)
-            EEG.chanlocs(iCh).urchan = iCh;
-        end
-
-    elseif strcmp(BIDS.description.Name, {'ercp'})
-        chanfile = fullfile(fileparts(eegFile), [fileID, '_channels.tsv']);
-        elecfile = fullfile(fileparts(eegFile), ['sub-' p.entities.sub, '_ses-' p.entities.ses, '_electrodes.tsv']);
-        [EEG, channelData, elecData] = bids_importchanlocs(EEG, chanfile, elecfile);
-
-        % Urchanlocs
-        EEG.urchanlocs = EEG.chanlocs;
-        for iCh = 1:numel(EEG.chanlocs)
-            EEG.chanlocs(iCh).urchan = iCh;
-        end
-
-    else
-        % continue
-    end
+    %%% Channel locations; clean_channels needs coordinates
+    EEG = gedai.assignChanlocs(EEG, BIDS, opts.sfppath, eegFile, p, fileID);
 
     %%% Detect. run.run_filter stops after detection under badchannelsonly, so the
     %%% preparation is identical to what bidsfun_hp_zap_cleanline will apply later.
@@ -192,17 +160,13 @@ for ifile = 1:numel(filesEEG)
     reason(byCorr) = "low_correlation";
     reason(byFlat) = "flat";                        % most specific wins
 
-    reportTh = 4;
-    if isfield(bc.params, 'noiseReportThreshold'), reportTh = bc.params.noiseReportThreshold; end
-    highLineNoise = bc.znoise(:) > reportTh;
-
     T = table(string({EEG.urchanlocs.labels})', ...
               repmat("eeg", numel(bc.mask), 1), ...
               repmat("microV", numel(bc.mask), 1), ...
               string(repmat("good", numel(bc.mask), 1)), ...
-              reason, lowcorrprop(:), bc.znoise(:), highLineNoise, bc.flatprop(:), ...
+              reason, lowcorrprop(:), bc.znoise(:), bc.flatprop(:), ...
         'VariableNames', {'name', 'type', 'units', 'status', 'status_description', ...
-                          'low_correlation_prop', 'znoise', 'high_line_noise', 'flat_prop'});
+                          'low_correlation_prop', 'znoise', 'flat_prop'});
     T.status(bc.mask(:)) = "bad";
     writetable(T, fullfile(outDir, [fileID '_desc-' opts.desc '_channels.tsv']), ...
         'FileType', 'text', 'Delimiter', '\t');

@@ -158,12 +158,14 @@ if opts.zeropatchseconds > 0
     EEG = run.excise_zero_patches(EEG, 'minseconds', opts.zeropatchseconds);
 end
 
-%%% Build filters
-fprintf('Building filters (srate = %d Hz) ...\n', EEG.srate)
-EEG_DCFilter_NumDen = filterbank(EEG.srate, 'DC_RCSquareFilt');
-
 %%% DC removal
 if opts.removeDC
+    
+    %%% Build filters
+    fprintf('Building filters (srate = %d Hz) ...\n', EEG.srate)
+    EEG_DCFilter_NumDen = filterbank(EEG.srate, 'DC_RCSquareFilt');
+
+    %%% DC removal
     D = tic; fprintf('\nDC removal ...\n')
     EEG.data = filtfilt(EEG_DCFilter_NumDen(1,:), EEG_DCFilter_NumDen(2,:), double(EEG.data'))';
     KeepTime.DCRemoval = toc(D);
@@ -221,11 +223,11 @@ if opts.badchannels
     %%% is intact, they sit where sleep activity matters most, and removing mains is what
     %%% the very next stage is for. znoise stays in the .mat, the channels.tsv and the
     %%% topoplot, so a pathological channel is still visible; it just no longer decides.
-    %%% Set noiseThreshold back to a finite value to restore the old behaviour.
+    %%% Set noiseThreshold back to a finite value to restore the old behaviour - the
+    %%% topoplot marker follows the same threshold, so there is only one number to set.
     bcp = struct( ...
         'corrThreshold',       0.7, ...
         'noiseThreshold',      Inf, ...
-        'noiseReportThreshold', 4, ...
         'windowSeconds',       5, ...
         'maxBrokenTime',       0.5, ...
         'numSamples',          25, ...
@@ -258,7 +260,7 @@ if opts.badchannels
     end
 
     %%% The flat mask is folded in inside the cached call, so the mask on disk is the
-    %%% one actually applied - bidsfun_run_gedai reads it back to index the leadfield.
+    %%% one actually applied - bidsfun_gedai reads it back to index the leadfield.
     [removed_channels, corrs, znoise, flatprop] = smartcache( ...
         @() detectBadChannels(EEG, flatmask, flatprop, bcp), ...
         opts.badchanfile, opts.refresh, ...
@@ -363,7 +365,7 @@ end
 function [signal, removed_channels, corrs, znoise, flatprop] = detectBadChannels(EEG, flatmask, flatprop, bcp)
 % Union of the clean_channels criteria and the flat-line criterion, as one cached unit.
 % Kept together so the mask written to the cache is the mask actually applied to the
-% data: bidsfun_run_gedai reads it back to pick the matching rows of the leadfield, and a
+% data: bidsfun_gedai reads it back to pick the matching rows of the leadfield, and a
 % cache holding only part of the criteria would silently desync from the saved file.
     [signal, removed_channels, corrs, znoise] = clean_channels(EEG, ...
         bcp.corrThreshold, bcp.noiseThreshold, bcp.windowSeconds, bcp.maxBrokenTime, ...
