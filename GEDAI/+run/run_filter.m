@@ -54,29 +54,29 @@ function [EEG, KeepTime] = run_filter(EEG, opts)
 %
 % Methods secton:
 %
-% Continuous EEG (256 channels, 250 Hz) was high-pass filtered to remove DC offset and then 
-% cleaned of power-line artifacts using Zapline-plus (Klug & Kloosterman, 2022), an extension 
-% of the Zapline algorithm (de Cheveigné, 2020). Zapline separates the data into a 
-% line-frequency-dominated and a residual component using a comb filter, isolates the artifactual 
-% subspace via DSS applied to the line frequency and its harmonics, and removes it by spatial 
-% projection, thereby avoiding the spectral distortion introduced by notch filtering. The target 
-% frequency was fixed at 50 Hz; at a 250 Hz sampling rate the fundamental and its second harmonic 
-% (100 Hz) were removed jointly. To accommodate non-stationarity of the line artifact across the 
-% [8-h] recordings, data were processed in fixed 300-s chunks, with the individual noise peak 
-% re-estimated within each chunk (search window 50 ± 3 Hz) and the number of removed components 
+% Continuous EEG (256 channels, 250 Hz) was high-pass filtered to remove DC offset and then
+% cleaned of power-line artifacts using Zapline-plus (Klug & Kloosterman, 2022), an extension
+% of the Zapline algorithm (de Cheveigné, 2020). Zapline separates the data into a
+% line-frequency-dominated and a residual component using a comb filter, isolates the artifactual
+% subspace via DSS applied to the line frequency and its harmonics, and removes it by spatial
+% projection, thereby avoiding the spectral distortion introduced by notch filtering. The target
+% frequency was fixed at 50 Hz; at a 250 Hz sampling rate the fundamental and its second harmonic
+% (100 Hz) were removed jointly. To accommodate non-stationarity of the line artifact across the
+% [8-h] recordings, data were processed in fixed 300-s chunks, with the individual noise peak
+% re-estimated within each chunk (search window 50 ± 3 Hz) and the number of removed components
 % determined adaptively per chunk by iterative outlier detection on the DSS component scores
 % (minimum 1 component). The outlier-detection threshold was held fixed at sigma = 5, the upper
 % bound of the algorithm's adaptive range and therefore its most conservative setting; the
 % iterative threshold adaptation was disabled because it converged to this bound on every pilot
 % recording, so a fixed threshold yields identical output while also equalising cleaning
 % strength across recordings. Residual artifacts at 50 and 100 Hz were subsequently attenuated using
-% a custom parallelised reimplementation CleanLine (Mullen, 2012; EEGLAB), leveraging 
+% a custom parallelised reimplementation CleanLine (Mullen, 2012; EEGLAB), leveraging
 % multi-taper sinusoidal regression, .
-% Within 4-s windows advanced in 2-s steps, the Thomson F-test for a deterministic sinusoid 
-% was evaluated at 50 and 100 Hz using 7 Slepian tapers (time–bandwidth product 4, 
-% resolution bandwidth 2 Hz) and an FFT zero-padded to 4096 points (0.061 Hz bin spacing). 
-% Sinusoids reaching p < 0.01 were fitted by least squares and subtracted; target frequencies 
-% not reaching significance in a given window and channel were left unmodified. Fitted 
+% Within 4-s windows advanced in 2-s steps, the Thomson F-test for a deterministic sinusoid
+% was evaluated at 50 and 100 Hz using 7 Slepian tapers (time–bandwidth product 4,
+% resolution bandwidth 2 Hz) and an FFT zero-padded to 4096 points (0.061 Hz bin spacing).
+% Sinusoids reaching p < 0.01 were fitted by least squares and subtracted; target frequencies
+% not reaching significance in a given window and channel were left unmodified. Fitted
 % components were crossfaded sigmoidally across the 2-s overlap between adjacent windows.
 % Unlike the default CleanLine implementation, which subtracts an estimated sinusoid at each
 % target frequency regardless of significance, subtraction here was conditional on the F-test.
@@ -160,7 +160,7 @@ end
 
 %%% DC removal
 if opts.removeDC
-    
+
     %%% Build filters
     fprintf('Building filters (srate = %d Hz) ...\n', EEG.srate)
     EEG_DCFilter_NumDen = filterbank(EEG.srate, 'DC_RCSquareFilt');
@@ -213,21 +213,9 @@ if opts.badchannels
     %%% Parameters for both criteria, kept in one place: the calls below read them from
     %%% here, and bidsfun_hp_zap_cleanline writes them to the JSON sidecar, so what is recorded is
     %%% necessarily what was run.
-    %%% noiseThreshold is Inf on purpose: the line-noise criterion is computed and
-    %%% reported, but no longer removes anything. On these recordings the electrodes it
-    %%% ranks highest are consistently the ones around the vertex, and they are not
-    %%% artefacts of the statistic - with the per-channel denominator removed they came
-    %%% out further ahead still (100/81/70 sigma above the population). They genuinely
-    %%% carry the most >45 Hz energy on the head, plausibly because the net's lead bundle
-    %%% exits there. But their reconstruction correlation is ~0.99, i.e. the EEG in them
-    %%% is intact, they sit where sleep activity matters most, and removing mains is what
-    %%% the very next stage is for. znoise stays in the .mat, the channels.tsv and the
-    %%% topoplot, so a pathological channel is still visible; it just no longer decides.
-    %%% Set noiseThreshold back to a finite value to restore the old behaviour - the
-    %%% topoplot marker follows the same threshold, so there is only one number to set.
     bcp = struct( ...
         'corrThreshold',       0.7, ...
-        'noiseThreshold',      Inf, ...
+        'noiseThreshold',      4, ...
         'windowSeconds',       5, ...
         'maxBrokenTime',       0.5, ...
         'numSamples',          25, ...
@@ -255,7 +243,8 @@ if opts.badchannels
     avgRef = [];
     if opts.badchanavgref
         fprintf('Average-referencing for detection ...\n')
-        avgRef   = sum(EEG.data, 1) / (size(EEG.data, 1) + 1);   % +1: implicit reference channel
+        % avgRef   = sum(EEG.data, 1) / (size(EEG.data, 1) + 1);   % +1: implicit reference channel
+        avgRef = median([EEG.data; zeros(1, size(EEG.data,2))], 1);        
         EEG.data = EEG.data - avgRef;
     end
 
@@ -320,14 +309,14 @@ end
 %%% Cleanline
 if opts.cleanline && ~opts.badchannelsonly
 
-%     % base CleanLine directly on what ZapLine actually found and treated
-%     linefreqs = zaplineConfig.noisefreqs;
-%     fprintf('ZapLine-plus detected and cleaned: %s Hz\n', mat2str(round(linefreqs,2)));
-% 
-%     % only pass freqs that had a real noise ratio to CleanLine
-%     keepIdx = analyticsResults.ratioNoiseRaw > 1.5;   % adjust threshold based on what you see
-%     linefreqs = zaplineConfig.noisefreqs(keepIdx);
-%     fprintf('Only keep those with noise ratio >1.5: %s Hz\n', mat2str(round(linefreqs,2)));
+    %     % base CleanLine directly on what ZapLine actually found and treated
+    %     linefreqs = zaplineConfig.noisefreqs;
+    %     fprintf('ZapLine-plus detected and cleaned: %s Hz\n', mat2str(round(linefreqs,2)));
+    %
+    %     % only pass freqs that had a real noise ratio to CleanLine
+    %     keepIdx = analyticsResults.ratioNoiseRaw > 1.5;   % adjust threshold based on what you see
+    %     linefreqs = zaplineConfig.noisefreqs(keepIdx);
+    %     fprintf('Only keep those with noise ratio >1.5: %s Hz\n', mat2str(round(linefreqs,2)));
 
     D = tic; fprintf('\nClean line ...\n')
     % EEG.data = double(EEG.data);
@@ -367,8 +356,8 @@ function [signal, removed_channels, corrs, znoise, flatprop] = detectBadChannels
 % Kept together so the mask written to the cache is the mask actually applied to the
 % data: bidsfun_gedai reads it back to pick the matching rows of the leadfield, and a
 % cache holding only part of the criteria would silently desync from the saved file.
-    [signal, removed_channels, corrs, znoise] = clean_channels(EEG, ...
-        bcp.corrThreshold, bcp.noiseThreshold, bcp.windowSeconds, bcp.maxBrokenTime, ...
-        bcp.numSamples, bcp.subsetSizeFraction, bcp.windowStride);
-    removed_channels = removed_channels(:) | flatmask(:);
+[signal, removed_channels, corrs, znoise] = clean_channels(EEG, ...
+    bcp.corrThreshold, bcp.noiseThreshold, bcp.windowSeconds, bcp.maxBrokenTime, ...
+    bcp.numSamples, bcp.subsetSizeFraction, bcp.windowStride);
+removed_channels = removed_channels(:) | flatmask(:);
 end

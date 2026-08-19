@@ -83,6 +83,8 @@ if isfield(EEGraw, 'urchanlocs') && ~isempty(EEGraw.urchanlocs)
             numel(urchanlocs) - numel(EEGraw.chanlocs));
         EEGraw = pop_interp(EEGraw, urchanlocs, 'spherical');
     end
+    
+    urchanlocs = EEGclean.urchanlocs;
     if numel(EEGclean.chanlocs) < numel(urchanlocs)
         fprintf('gedai.eval_clean: interpolating %d channel(s) in clean ...\n', ...
             numel(urchanlocs) - numel(EEGclean.chanlocs));

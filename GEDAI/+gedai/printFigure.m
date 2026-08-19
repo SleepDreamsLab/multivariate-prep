@@ -18,7 +18,7 @@ function ok = printFigure(fig, fname, varargin)
 %
 % See also: print
 
-if nargin < 3 || isempty(varargin), varargin = {'-r100'}; end
+if nargin < 3 || isempty(varargin), varargin = {'-r150'}; end
 
 d = fileparts(fname);
 if ~isempty(d) && ~exist(d, 'dir'), mkdir(d); end

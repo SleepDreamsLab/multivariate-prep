@@ -22,7 +22,14 @@
       "Bash(matlab -batch \"test_viewer\")",
       "Bash(matlab -batch \"test_picker\")",
       "Bash(taskkill //F //IM MATLAB.exe)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"addpath\\('GEDAI'\\); disp\\(checkcode\\('GEDAI/+run/pwelch_simple.m','-cyc'\\)\\)\")",
+      "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"addpath\\('GEDAI'\\); r = checkcode\\('GEDAI/+run/pwelch_simple.m'\\); for i=1:numel\\(r\\); fprintf\\('L%d: %s\\\\n', r\\(i\\).line, r\\(i\\).message\\); end\")",
+      "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"addpath\\('GEDAI'\\); r = checkcode\\('GEDAI/+run/pwelch_simple.m','-id'\\); for i=1:numel\\(r\\); fprintf\\('L%d [%s]: %s\\\\n', r\\(i\\).line, r\\(i\\).id, r\\(i\\).message\\); end\")",
+      "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"addpath\\('GEDAI'\\); r = checkcode\\('GEDAI/+run/pwelch_simple.m','-id'\\); if isempty\\(r\\); disp\\('CLEAN'\\); else; for i=1:numel\\(r\\); fprintf\\('L%d [%s]: %s\\\\n', r\\(i\\).line, r\\(i\\).id, r\\(i\\).message\\); end; end\")",
+      "Bash('/c/Program Files/MATLAB/R2025a/bin/matlab.exe' -batch ' *)",
+      "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"addpath\\('GEDAI'\\); r = checkcode\\('GEDAI/+gedai/plotBadChannelTime.m','-id'\\); if isempty\\(r\\); disp\\('CLEAN'\\); else; for i=1:numel\\(r\\); fprintf\\('L%d [%s]: %s\\\\n', r\\(i\\).line, r\\(i\\).id, r\\(i\\).message\\); end; end\")",
+      "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"disp\\(tempdir\\)\")"
     ]
   }
 }

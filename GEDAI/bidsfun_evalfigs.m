@@ -21,9 +21,10 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %                     recording; set it to compare two derivatives - e.g. beforedesc the
 %                     filtered data and afterdesc the GEDAI output, which reproduces what
 %                     bidsfun_gedai plots internally.
-%   avgref            average-reference both recordings before plotting. Match the stage
-%                     being reproduced: bidsfun_gedai re-references before GEDAI,
+%   avgrefbefore      average-reference the "before" recording before plotting. Match the
+%                     stage being reproduced: bidsfun_gedai re-references before GEDAI,
 %                     bidsfun_hp_zap_cleanline does not. Default: false
+%   avgrefafter       average-reference the "after" recording before plotting. Default: false
 %   scoringpath       Directory containing sleep-scoring files.
 %                     Default: <BIDS root>/derivatives/scoring/scores/Manual_Checked
 %   sfppath           Path passed to the SFP resolver. Default: <BIDS root>
@@ -66,8 +67,10 @@ arguments
     opts.derivpath        char = ''
     opts.afterdesc        char = ''
     opts.beforedesc       char = ''
-    opts.derivfileext     char = '.set'
-    opts.avgref (1,1)     logical = false
+    opts.beforefileext    char = '.set'
+    opts.afterfileext     char = '.set'
+    opts.avgrefbefore (1,1) logical = false
+    opts.avgrefafter  (1,1) logical = false
     opts.scoringpath      char = []
     opts.sfppath          char = BIDS.pth
 
@@ -145,7 +148,7 @@ for ifile = 1:numel(filesEEG)
     try
 
         %%% Resolve "after" file
-        afterFile = fullfile(opts.derivpath, subDir, [fileID '_desc-' opts.afterdesc '_eeg' opts.derivfileext]);
+        afterFile = fullfile(opts.derivpath, subDir, [fileID '_desc-' opts.afterdesc '_eeg' opts.afterfileext]);
         if ~isfile(afterFile)
             fprintf('[skip] after file not found: %s\n', afterFile)
             continue
@@ -173,7 +176,7 @@ for ifile = 1:numel(filesEEG)
             EEGraw = fast_eeg_import(rawFile);
         else
             beforeFile = fullfile(opts.derivpath, subDir, ...
-                [fileID '_desc-' opts.beforedesc '_eeg' opts.derivfileext]);
+                [fileID '_desc-' opts.beforedesc '_eeg' opts.beforefileext]);
             if ~isfile(beforeFile)
                 fprintf('[skip] before file not found: %s\n', beforeFile)
                 continue
@@ -200,13 +203,23 @@ for ifile = 1:numel(filesEEG)
         EEGafter = pop_select(EEGafter, 'nochannel', intersect(1:EEGafter.nbchan, opts.noteegchannels));
         EEGafter = gedai.assignChanlocs(EEGafter, BIDS, opts.sfppath, rawFile, p, fileID);
 
-        %%% Average reference, when asked. bidsfun_gedai re-references before it runs
-        %%% GEDAI, so its figures are of average-referenced data; set avgref to match when
-        %%% reproducing that comparison, or the two stages' figures sit on different
+        % %%% Removed channels
+        % removed_channels = true(numel(EEGafter.urchanlocs), 1);
+        % removed_channels([EEGafter.chanlocs.urchan]) = false;        
+        % EEGraw = pop_select(EEGraw, 'nochannel', intersect(1:EEGraw.nbchan, find(removed_channels)));
+
+        %%% Average reference, when asked, per recording. bidsfun_gedai re-references before
+        %%% it runs GEDAI, so its figures are of average-referenced data; set avgrefafter (and
+        %%% avgrefbefore, if the "before" file is itself a re-referenced derivative) to match
+        %%% when reproducing that comparison, or the two stages' figures sit on different
         %%% baselines. Same formula as there - the +1 counts the implicit reference channel.
-        if opts.avgref
-            fprintf('Average-referencing both recordings ...\n')
-            EEGraw.data   = EEGraw.data   - sum(EEGraw.data,   1) / (size(EEGraw.data,   1) + 1);
+        if opts.avgrefbefore
+            fprintf('Average-referencing before recording ...\n')
+            EEGraw.data = EEGraw.data - sum(EEGraw.data, 1) / (size(EEGraw.data, 1) + 1);
+            % EEGraw.data = EEGraw.data - sum(EEGraw.data(~removed_channels, :), 1) / (size(EEGraw.data, 1) + 1 - sum(removed_channels));
+        end
+        if opts.avgrefafter
+            fprintf('Average-referencing after recording ...\n')
             EEGafter.data = EEGafter.data - sum(EEGafter.data, 1) / (size(EEGafter.data, 1) + 1);
         end
 
