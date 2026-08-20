@@ -3,6 +3,7 @@
 % *************************************************************************
 % GEDAI
 addpath(genpath(['..' filesep 'GEDAI-master'])) % https://github.com/SvennoNito/GEDAI-master
+% --> switch from main to sleep-fast branch!
 
 % BIDS
 addpath(genpath(['..' filesep 'bids-matlab'])) % https://github.com/bids-standard/bids-matlab

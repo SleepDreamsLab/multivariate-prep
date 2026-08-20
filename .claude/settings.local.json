@@ -29,7 +29,8 @@
       "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"addpath\\('GEDAI'\\); r = checkcode\\('GEDAI/+run/pwelch_simple.m','-id'\\); if isempty\\(r\\); disp\\('CLEAN'\\); else; for i=1:numel\\(r\\); fprintf\\('L%d [%s]: %s\\\\n', r\\(i\\).line, r\\(i\\).id, r\\(i\\).message\\); end; end\")",
       "Bash('/c/Program Files/MATLAB/R2025a/bin/matlab.exe' -batch ' *)",
       "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"addpath\\('GEDAI'\\); r = checkcode\\('GEDAI/+gedai/plotBadChannelTime.m','-id'\\); if isempty\\(r\\); disp\\('CLEAN'\\); else; for i=1:numel\\(r\\); fprintf\\('L%d [%s]: %s\\\\n', r\\(i\\).line, r\\(i\\).id, r\\(i\\).message\\); end; end\")",
-      "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"disp\\(tempdir\\)\")"
+      "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"disp\\(tempdir\\)\")",
+      "Bash(timeout 240 matlab -batch \"shot\")"
     ]
   }
 }

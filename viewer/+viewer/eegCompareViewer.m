@@ -224,7 +224,10 @@ fig = figure('Name', figName, 'NumberTitle', 'off', ...
 % panelX/panelW are shared by ax, axHypno, and axScroll so all three line
 % up horizontally, starting near the actual left edge of the figure.
 panelX = 0.05; panelW = 0.93;
-ax = axes('Parent', fig, 'Units', 'normalized', 'Position', [panelX 0.255 panelW 0.715]);
+% Vertical budget, bottom-to-top: control strip (0.012-0.077), scrollbar
+% (0.089-0.119), hypnogram + its xlabel (0.150-0.205), then this panel --
+% whose own tick labels and xlabel need the gap below 0.265 to itself.
+ax = axes('Parent', fig, 'Units', 'normalized', 'Position', [panelX 0.265 panelW 0.700]);
 ax.Box        = 'on';
 ax.TickLength = [0 0];
 ax.Toolbar    = [];
@@ -362,19 +365,9 @@ btnSubtract = uicontrol(p, 'Style', 'togglebutton', 'String', 'Subtract ICs', 'U
 % Shares panelX/panelW with the EEG panel and the scrollbar, so all three
 % line up horizontally.
 hypnoLabels = {'N3', 'N2', 'N1', 'R', 'W'};   % short form of stageNames, same order as stageValues
-hypnoY = 0.163; hypnoH = 0.050;
+hypnoY = 0.150; hypnoH = 0.055;
 axHypno = axes('Parent', fig, 'Units', 'normalized', ...
     'Position', [panelX, hypnoY, panelW, hypnoH]);
-axHypno.YLim       = [min(stageValues)-0.5, max(stageValues)+0.5];
-axHypno.YTick      = stageValues;
-axHypno.YTickLabel = hypnoLabels;
-axHypno.XTickMode  = 'auto';
-axHypno.Box        = 'on';
-axHypno.FontSize   = 7;
-axHypno.TickLength = [0 0];
-axHypno.Toolbar    = [];
-disableDefaultInteractivity(axHypno);
-xlabel(axHypno, 'Time (h)', 'FontSize', 7);
 
 if ~isempty(scoringDigits)
     % XLim ends exactly at the last scored epoch -- not at totalDur, which
@@ -384,9 +377,27 @@ if ~isempty(scoringDigits)
     epochTimes = (0:numel(scoringDigits)-1) * scoreEpochSec;
     stairs(axHypno, [epochTimes, hypnoEnd] / 3600, double([scoringDigits(:); scoringDigits(end)]), ...
         'Color', [0.20 0.20 0.55], 'LineWidth', 1);
-    axHypno.XLim = [0, hypnoEnd] / 3600;
+    hypnoXLim = [0, hypnoEnd] / 3600;
 else
-    axHypno.XLim = [0, max(totalDur, displaySec)] / 3600;
+    hypnoXLim = [0, max(totalDur, displaySec)] / 3600;
+end
+
+% Axes cosmetics go AFTER the stairs call: plotting into an axes resets its
+% tick labels to auto, which was quietly turning the stage names back into
+% the raw scoring digits (-3..1) on the y-axis.
+axHypno.YLim       = [min(stageValues)-0.5, max(stageValues)+0.5];
+axHypno.YTick      = stageValues;
+axHypno.YTickLabel = hypnoLabels;
+axHypno.XLim       = hypnoXLim;
+axHypno.XTickMode  = 'auto';
+axHypno.Box        = 'on';
+axHypno.FontSize   = 7;
+axHypno.TickLength = [0 0];
+axHypno.Toolbar    = [];
+disableDefaultInteractivity(axHypno);
+xlabel(axHypno, 'Time (h)', 'FontSize', 7);
+
+if isempty(scoringDigits)
     text(axHypno, mean(axHypno.XLim), mean(axHypno.YLim), 'No sleep scoring loaded', ...
         'HorizontalAlignment', 'center', 'FontSize', 8, 'Color', [0.5 0.5 0.5]);
 end
@@ -398,7 +409,7 @@ end
 % everything else), dwarfing the ~40ms the actual line drawing takes. A
 % patch is rendered by the same painters pipeline as the traces and costs
 % next to nothing by comparison.
-sliderY = 0.093; sliderH = 0.030;   % clears the control strip below
+sliderY = 0.089; sliderH = 0.030;   % clears the control strip below
 axScroll = axes('Parent', fig, 'Units', 'normalized', ...
     'Position', [panelX, sliderY, panelW, sliderH]);
 axScroll.XLim       = [0, max(totalDur, displaySec)];

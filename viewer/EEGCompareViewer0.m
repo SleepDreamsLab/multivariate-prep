@@ -16,6 +16,9 @@ file2       = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\ra
 % file2       = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\rawdata\derivatives\prep-ged\sub-drop0001\ses-t1\sub-drop0001_ses-t1_task-sleep_run-01_desc-zc2gedWakeBBAutoFSAutoPlusN2N3REMFSAutoMinus_eeg.set';   % second EEG file
 scoringFile = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\derivatives\scores\final\sub-drop0001_ses-t1_task-sleep_run-01_eeg.csv';                         % sleep scoring file, '' if none
 
+file1       = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\rawdata\derivatives\prep-ged-znoise4\sub-drop0001\ses-t1\sub-drop0001_ses-t1_task-sleep_run-01_desc-zc_eeg.set';   % first EEG file
+file2       ='\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\rawdata\derivatives\prep-ged-znoise4\sub-drop0001\ses-t1\sub-drop0001_ses-t1_task-sleep_run-01_desc-zcged_eeg.set';   % first EEG file
+
 net = 'EGI256'; % net type, passed to chans1020
 plotDecimation = 5; % only plot every Nth sample (display only; does not affect underlying data)
 
