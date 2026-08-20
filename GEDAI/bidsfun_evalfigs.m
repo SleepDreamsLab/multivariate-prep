@@ -96,7 +96,7 @@ arguments
     opts.PlotPsdPerStage      (1,1) logical = true
     opts.PlotPsdPerStageChans (1,1) logical = true
     opts.PlotPsdOverview      (1,1) logical = true
-    opts.PlotTopoBandPower    (1,1) logical = false
+    opts.PlotTopoBandPower    (1,1) logical = true
     opts.PlotTopoBandStage    (1,1) logical = true
     opts.PlotEpochOverlay     (1,1) logical = false
     opts.PlotTimefreq         (1,1) logical = true

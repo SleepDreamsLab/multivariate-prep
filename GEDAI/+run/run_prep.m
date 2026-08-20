@@ -32,9 +32,6 @@ end
 
 KeepTime = opts.KeepTime;
 
-%%% Drop non-EEG channels
-EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
-
 %%% Optional downsampling
 if opts.targetsrate > 0 && EEG.srate ~= opts.targetsrate
     D = tic; fprintf('Resampling %d → %d Hz ...\n', EEG.srate, opts.targetsrate)

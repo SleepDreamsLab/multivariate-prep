@@ -51,6 +51,17 @@ elseif strcmp(BIDS.description.Name, {'ercp'})
         EEG.chanlocs(iCh).urchan = iCh;
     end
 
+elseif strcmp(BIDS.description.Name, {'DM'})
+    EEG.chanlocs = readlocs(fullfile(BIDS.pth, 'chans124.loc'));
+    elabels = cellfun(@(x) ['E' x], {EEG.chanlocs.labels}, 'uni', 0);
+    [EEG.chanlocs.labels] = deal(elabels{:});
+
+    % Urchanlocs
+    EEG.urchanlocs = EEG.chanlocs;
+    for iCh = 1:numel(EEG.chanlocs)
+        EEG.chanlocs(iCh).urchan = iCh;
+    end    
+
 else
     % No coordinates available; caller proceeds without them.
 end

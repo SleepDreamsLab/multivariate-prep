@@ -227,7 +227,7 @@ for ifile = 1:numel(filesEEG)
 
     %%% Strongly HP filter the data before RANSAC bad channel detection
     D = tic; fprintf('\nSlow activity removal ...\n')
-    ICA_HiPassFilt_IIR = filterbank(EEG.srate, 'ICA_HiPassFilt_IIR')
+    ICA_HiPassFilt_IIR = filterbank(EEG.srate, 'ICA_HiPassFilt_IIR');
     EEG.data = single(filtfilt(ICA_HiPassFilt_IIR, double(EEG.data)')');
     KeepTime.HPFilter = toc(D);
 
