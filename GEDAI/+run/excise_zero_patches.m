@@ -26,7 +26,7 @@ function [EEG, nPatches] = excise_zero_patches(EEG, opts)
 %                updated to match; .etc.zeropatches holds what is needed to restore it
 %   nPatches   — number of patches removed
 %
-% See also: run.restore_zero_patches, run.run_filter
+% See also: run.restore_zero_patches, run.run_prep
 
 arguments
     EEG                  struct

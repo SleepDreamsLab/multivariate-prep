@@ -30,7 +30,11 @@
       "Bash('/c/Program Files/MATLAB/R2025a/bin/matlab.exe' -batch ' *)",
       "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"addpath\\('GEDAI'\\); r = checkcode\\('GEDAI/+gedai/plotBadChannelTime.m','-id'\\); if isempty\\(r\\); disp\\('CLEAN'\\); else; for i=1:numel\\(r\\); fprintf\\('L%d [%s]: %s\\\\n', r\\(i\\).line, r\\(i\\).id, r\\(i\\).message\\); end; end\")",
       "Bash(\"/c/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"disp\\(tempdir\\)\")",
-      "Bash(timeout 240 matlab -batch \"shot\")"
+      "Bash(timeout 240 matlab -batch \"shot\")",
+      "Bash(\"C:/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"files = {'GEDAI/+run/run_prep.m','GEDAI/bidsfun_detect_badchans.m','GEDAI/bidsfun_hp_zap_cleanline.m','GEDAI/bidsfun_gedai.m'}; ok=true; for i=1:numel\\(files\\); r = checkcode\\(files{i}, '-id'\\); if ~isempty\\(r\\); fprintf\\('--- %s ---\\\\n', files{i}\\); for j=1:numel\\(r\\); fprintf\\('%s \\(line %d\\): %s\\\\n', r\\(j\\).id, r\\(j\\).line, r\\(j\\).message\\); end; end; end; fprintf\\('DONE\\\\n'\\);\")",
+      "Bash(\"C:/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"r = checkcode\\('GEDAI/bidsfun_detect_badchans.m','-id'\\); if isempty\\(r\\); fprintf\\('OK, no issues\\\\n'\\); else; for j=1:numel\\(r\\); fprintf\\('%s \\(line %d\\): %s\\\\n', r\\(j\\).id, r\\(j\\).line, r\\(j\\).message\\); end; end\")",
+      "Bash(\"C:/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"w = which\\('topoplot'\\); fprintf\\('%s\\\\n', w\\);\")",
+      "Bash(\"C:/Program Files/MATLAB/R2025a/bin/matlab.exe\" -batch \"files = {'GEDAI/bidsfun_detect_badchans.m','GEDAI/+gedai/plotBadChannels.m','GEDAI/+gedai/private/drawTopoPanel.m'}; for i=1:numel\\(files\\); r = checkcode\\(files{i}, '-id'\\); if ~isempty\\(r\\); fprintf\\('--- %s ---\\\\n', files{i}\\); for j=1:numel\\(r\\); fprintf\\('%s \\(line %d\\): %s\\\\n', r\\(j\\).id, r\\(j\\).line, r\\(j\\).message\\); end; else; fprintf\\('OK: %s\\\\n', files{i}\\); end; end\")"
     ]
   }
 }

@@ -205,7 +205,7 @@ for ifile = 1:numel(filesEEG)
         %%% Bad channels
         %%% bidsfun_hp_zap_cleanline already removed them before saving the .set, and every
         %%% surviving channel's urchan points back into EEG.urchanlocs (both are set before
-        %%% any channel is ever dropped, in run.run_filter). So which channels are missing -
+        %%% any channel is ever dropped, in bidsfun_hp_zap_cleanline). So which channels are missing -
         %%% and therefore which rows of the leadfield to use - is already in the file; no
         %%% separate mask file needs loading.
         removed_channels = true(numel(EEG.urchanlocs), 1);

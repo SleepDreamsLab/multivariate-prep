@@ -99,8 +99,9 @@ fprintf('Scanning for bad channels...\n');
 if signal.srate > 100
     % remove signal content above 50Hz
     B = firls(100,[2*[0 45 50]/signal.srate 1],[1 1 0 0]);
-    for c=signal.nbchan:-1:1
-        X(:,c) = filtfilt(B,1,signal.data(c,:)'); end
+    % for c=signal.nbchan:-1:1
+    %     X(:,c) = filtfilt(B,1,signal.data(c,:)'); end
+    X = filtfilt(B, 1, signal.data');
     % determine z-scored level of EM noise-to-signal ratio for each channel
     % TRIED AND REJECTED: dividing by median(mad(X,1)) - the typical channel's
     % low-frequency amplitude - instead of by each channel's own, on the theory that the

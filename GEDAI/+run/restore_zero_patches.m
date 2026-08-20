@@ -11,7 +11,7 @@ function EEG = restore_zero_patches(EEG)
 % USAGE:
 %   EEG = run.restore_zero_patches(EEG);
 %
-% See also: run.excise_zero_patches, run.run_filter
+% See also: run.excise_zero_patches, run.run_prep
 
 arguments
     EEG struct
