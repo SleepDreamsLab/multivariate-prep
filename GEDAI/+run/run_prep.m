@@ -18,6 +18,9 @@ function [EEG, KeepTime] = run_prep(EEG, opts)
 %   zeropatchseconds  cut out all-zero patches (amplifier crash padding) longer than
 %                     this many seconds; 0 = skip                    (default 5)
 %   KeepTime          struct of prior timings to merge into the output (default struct())
+%   ramsaver          apply the DC-removal filter one channel at a time instead of to
+%                     the whole data matrix at once, trading speed for a lower peak
+%                     memory footprint                                (default false)
 %
 % See also: run.excise_zero_patches, run.restore_zero_patches
 
@@ -28,6 +31,7 @@ arguments
     opts.removeDC           (1,1) logical = true
     opts.zeropatchseconds   (1,1) double  = 5
     opts.KeepTime           struct        = struct()
+    opts.ramsaver           (1,1) logical = false
 end
 
 KeepTime = opts.KeepTime;
@@ -51,7 +55,15 @@ if opts.removeDC
     EEG_DCFilter_NumDen = filterbank(EEG.srate, 'DC_RCSquareFilt');
 
     D = tic; fprintf('\nDC removal ...\n')
-    EEG.data = filtfilt(EEG_DCFilter_NumDen(1,:), EEG_DCFilter_NumDen(2,:), double(EEG.data'))';
+    if opts.ramsaver
+        % Overwrite each channel's row in place - EEG.data already exists at full size,
+        % so this never holds a second full-size copy alongside it.
+        for iCh = 1:EEG.nbchan
+            EEG.data(iCh,:) = filtfilt(EEG_DCFilter_NumDen(1,:), EEG_DCFilter_NumDen(2,:), double(EEG.data(iCh,:)));
+        end
+    else
+        EEG.data = filtfilt(EEG_DCFilter_NumDen(1,:), EEG_DCFilter_NumDen(2,:), double(EEG.data'))';
+    end
     KeepTime.DCRemoval = toc(D);
 end
 

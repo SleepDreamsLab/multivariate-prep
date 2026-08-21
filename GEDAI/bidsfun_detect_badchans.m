@@ -45,6 +45,10 @@ function failures = bidsfun_detect_badchans(BIDS, opts)
 %   flatmaxbrokentime   proportion of windows failing the flat criterion above which
 %                       a channel is removed                              (default 0.3)
 %   noteegchannels      channel indices to drop                           (default 257:300)
+%   ramsaver            filter one channel at a time instead of the whole data matrix
+%                       at once (DC removal, the pre-RANSAC HP filter, and the noise
+%                       criterion's >50Hz removal), trading speed for a lower peak
+%                       memory footprint                                  (default false)
 %   sfppath         path passed to the SFP resolver              (default BIDS root)
 %   subjectfilter   cell array of subject ID strings; {} = all subjects
 %   sessionfilter   cell array of session ID strings; {} = all sessions
@@ -98,6 +102,7 @@ arguments
     opts.targetsrate      (1,1) double   = 0
     opts.removeDC         (1,1) logical  = true
     opts.zeropatchseconds (1,1) double   = 5
+    opts.ramsaver         (1,1) logical  = false
 
     %--- Bad channels ---
     opts.badchanavgref        (1,1) logical  = true
@@ -190,6 +195,7 @@ for ifile = 1:numel(filesEEG)
         'targetsrate',        opts.targetsrate, ...
         'removeDC',           opts.removeDC, ...
         'zeropatchseconds',   opts.zeropatchseconds, ...
+        'ramsaver',           opts.ramsaver, ...
         'KeepTime',           KeepTime);
 
     %%% Keep a record of the full montage before anything is dropped
@@ -212,7 +218,8 @@ for ifile = 1:numel(filesEEG)
         'windowStride',        opts.badchanstride, ...
         'averageReferenced',   opts.badchanavgref, ...
         'flatThresholdMicroV', opts.flatthreshold, ...
-        'flatMaxBrokenTime',   opts.flatmaxbrokentime);
+        'flatMaxBrokenTime',   opts.flatmaxbrokentime, ...
+        'ramsaver',            opts.ramsaver);
 
     %%% Flat channels, on the data as recorded. Must come before the average reference:
     %%% a dead channel reads as one constant value here, but subtracting the common
@@ -230,7 +237,15 @@ for ifile = 1:numel(filesEEG)
     %%% Strongly HP filter the data before RANSAC bad channel detection
     D = tic; fprintf('\nSlow activity removal ...\n')
     ICA_HiPassFilt_IIR = filterbank(EEG.srate, 'ICA_HiPassFilt_IIR');
-    EEG.data = single(filtfilt(ICA_HiPassFilt_IIR, double(EEG.data)')');
+    if opts.ramsaver
+        % Overwrite each channel's row in place instead of filtering the whole
+        % (transposed, double-cast) matrix at once - trades speed for lower peak memory.
+        for iCh = 1:EEG.nbchan
+            EEG.data(iCh,:) = single(filtfilt(ICA_HiPassFilt_IIR, double(EEG.data(iCh,:))'))';
+        end
+    else
+        EEG.data = single(filtfilt(ICA_HiPassFilt_IIR, double(EEG.data)')');
+    end
     KeepTime.HPFilter = toc(D);
 
     %%% Average-reference for detection only, then undo it (see the note in the module
@@ -351,6 +366,6 @@ function [signal, removed_channels, corrs, znoise, flatprop] = detectBadChannels
 % cache holding only part of the criteria would silently desync from the saved file.
 [signal, removed_channels, corrs, znoise] = clean_channels(EEG, ...
     bcp.corrThreshold, bcp.noiseThreshold, bcp.windowSeconds, bcp.maxBrokenTime, ...
-    bcp.numSamples, bcp.subsetSizeFraction, bcp.windowStride);
+    bcp.numSamples, bcp.subsetSizeFraction, bcp.windowStride, bcp.ramsaver);
 removed_channels = removed_channels(:) | flatmask(:);
 end
