@@ -110,6 +110,8 @@ arguments
     opts.dilatedirection {mustBeMember(opts.dilatedirection, {'both','forward','backward'})} = 'forward'
 end
 
+fprintf('\n=== Running bidsfun_gedai ===\n');
+
 if isempty(opts.inputpath), opts.inputpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.savepath),  opts.savepath  = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.figpath),   opts.figpath   = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
@@ -272,7 +274,11 @@ for ifile = 1:numel(filesEEG)
             gedaiFigDir  = fullfile(opts.figpath, ['desc-' opts.geddesc], fileID);
             gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' opts.geddesc '_eeg' opts.savefileext]);
 
-
+            %%% Skip run if output already exists and refresh not requested
+            if ~opts.refresh && isfile(gedaiDatFile)
+                fprintf('[skip] output exists: %s\n', gedaiDatFile)
+                continue
+            end
 
             %%% Run GEDAI (cached as BrainVision .dat)
             clear EEGgedai

@@ -118,6 +118,8 @@ arguments
     opts.sessionfilter    cell            = {}
 end
 
+fprintf('\n=== Running bidsfun_detect_badchans ===\n');
+
 if isempty(opts.savepath), opts.savepath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.figpath),  opts.figpath  = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
 

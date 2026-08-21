@@ -104,6 +104,8 @@ arguments
     opts.PlotSlopesTimecourse (1,1) logical = false
 end
 
+fprintf('\n=== Running bidsfun_evalfigs ===\n');
+
 if isempty(opts.derivpath), opts.derivpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.figpath),      opts.figpath      = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
 
