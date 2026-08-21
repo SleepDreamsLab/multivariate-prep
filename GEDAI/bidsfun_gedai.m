@@ -149,6 +149,27 @@ for ifile = 1:numel(filesEEG)
     end
     fprintf('\n=== %s ===\n', fileID)
 
+    %%% Skip this file entirely if every configured run's output already exists and
+    %%% refresh is not requested. Checked here, before the scoring load and the (slow)
+    %%% EEG import below, since none of that work is needed just to decide there is
+    %%% nothing to do. The per-run check further down stays as well, to still resume
+    %%% correctly if only some runs' outputs are missing.
+    if ~opts.refresh
+        gedaiRunDir = fullfile(opts.savepath, subDir);
+        runsPending = false;
+        for iRun = 1:numel(opts.runs)
+            gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' opts.geddesc '_eeg' opts.savefileext]);
+            if ~isfile(gedaiDatFile)
+                runsPending = true;
+                break
+            end
+        end
+        if ~runsPending
+            fprintf('[skip] all run output(s) exist for %s\n', fileID)
+            continue
+        end
+    end
+
     %%% Try block
     try
 
@@ -218,7 +239,7 @@ for ifile = 1:numel(filesEEG)
                 'channels resolved) - chanlocs and urchanlocs are out of sync.'], ...
                 nnz(~removed_channels), EEG.nbchan);
         end
-        fprintf('%d channel(s) removed as bad\n', nnz(removed_channels))
+        fprintf('%d channel(s) were removed as bad previously\n', nnz(removed_channels))
 
         %%% Leadfield covariance matrix
         fprintf('removing the same %d bad channels from leadfield matrix ...\n', nnz(removed_channels))
