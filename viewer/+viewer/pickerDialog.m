@@ -11,7 +11,8 @@ function [sel, ok] = pickerDialog(itemLabels, preselected, dlgName, promptStr, c
 %   dlgName     window title
 %   promptStr   text above the list
 %   confirmStr  label on the confirm button (e.g. 'Subtract')
-%   classNames  cellstr of category names, {} to hide the category row
+%   classNames  cellstr of group names (IC classes, channel montages, ...),
+%               {} to hide the group row
 %   classOfItem per-item index into classNames (0 = uncategorised)
 %
 %   sel  selected indices (equal to preselected if cancelled)
@@ -54,8 +55,8 @@ lst = uicontrol(dlg, 'Style', 'listbox', 'String', itemLabels, 'Units', 'pixels'
 
 popClass = [];
 if hasClasses
-    uicontrol(dlg, 'Style', 'text', 'String', 'Class:', 'Units', 'pixels', ...
-        'Position', [margin 82 44 18], 'HorizontalAlignment', 'left', 'BackgroundColor', 'w');
+    uicontrol(dlg, 'Style', 'text', 'String', 'Group:', 'Units', 'pixels', ...
+        'Position', [margin 82 46 18], 'HorizontalAlignment', 'left', 'BackgroundColor', 'w');
     popClass = uicontrol(dlg, 'Style', 'popupmenu', 'String', classNames, ...
         'Units', 'pixels', 'Position', [margin+48 82 142 24]);
     uicontrol(dlg, 'Style', 'pushbutton', 'String', 'Add', 'Units', 'pixels', ...

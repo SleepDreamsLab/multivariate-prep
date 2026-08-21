@@ -76,6 +76,18 @@ for k = 1:nSrc
 end
 nChFull = numel(chLabelsFull);
 
+%%% --- Channel groups offered in the channel picker ---
+% The picker's group row is generic (it drives the IC-class buttons too);
+% for channels the one useful grouping is the 10-20 montage plus EOG, which
+% is what chans1020 relabels a high-density net down to. Left empty when
+% nothing matches, which hides the row rather than offering a no-op.
+chanClass = double(is1020Label(chLabelsFull));
+if any(chanClass)
+    chanGroups = {'10-20 system + EOG'};
+else
+    chanGroups = {};
+end
+
 srate = srcEEG{1}.srate;
 nSamp = min(cellfun(@(E) size(E.data, 2), srcEEG));
 for k = 2:nSrc
@@ -133,20 +145,31 @@ scoreEpochSec = 30;                    % fixed: sleep-scoring epoch length, used
 nEpochs       = max(1, floor(totalDur / scoreEpochSec));
 
 %%% --- Colours ---
-% A source and its IC-subtracted overlay land on the SAME row, one on top
-% of the other, so that pair has to carry the strongest contrast in the
-% palette -- each raw colour is therefore paired with its rough complement
-% (blue/orange, crimson/green) rather than with a neighbouring hue. A
-% desaturated partner was tried first and was unreadable: at 0.5 pt the two
-% lines were near-indistinguishable.
-royalBlue    = [ 65 105 225] / 255;    % source 1, raw
-orangeColor  = [235 125  10] / 255;    % source 1, ICs removed
-redColor     = [220  20  60] / 255;    % source 2, raw -- crimson
-greenColor   = [ 15 145  70] / 255;    % source 2, ICs removed
+% Red reads as "before" and blue as "after", in both configurations the
+% viewer supports: with two inputs, input 1 is the before and input 2 the
+% after; with one input, the raw trace is the before and its IC-subtracted
+% overlay is the after. That is why the pairing below is conditional --
+% with a single recording the before/after pair IS raw-vs-cleaned, so it
+% takes the two primary colours outright.
+%
+% A source and its own overlay land on the SAME row, one on top of the
+% other, so that pair always carries the strongest contrast available: each
+% raw colour is paired with its rough complement (crimson/green,
+% blue/orange). A merely desaturated partner was tried first and was
+% unreadable -- at 0.5 pt the two lines were near-indistinguishable.
+royalBlue    = [ 65 105 225] / 255;
+redColor     = [220  20  60] / 255;    % crimson
+orangeColor  = [235 125  10] / 255;
+greenColor   = [ 15 145  70] / 255;
 diffColor    = [120  45 190] / 255;    % violet -- a derived trace, distinct from all four
 zeroLineGray = [0.75 0.75 0.75];
-colRaw   = {royalBlue,   redColor};
-colClean = {orangeColor, greenColor};
+if nSrc == 1
+    colRaw   = {redColor};             % before
+    colClean = {royalBlue};            % after (ICs removed)
+else
+    colRaw   = {redColor,   royalBlue};    % before, after
+    colClean = {greenColor, orangeColor};  % their IC-subtracted overlays
+end
 maxSeries = 2 * nSrc;                  % raw + cleaned per source
 
 %%% --- Row spacing for the stacked traces (robust, subsampled) ---
@@ -223,7 +246,10 @@ fig = figure('Name', figName, 'NumberTitle', 'off', ...
 
 % panelX/panelW are shared by ax, axHypno, and axScroll so all three line
 % up horizontally, starting near the actual left edge of the figure.
-panelX = 0.05; panelW = 0.93;
+% The left margin has to clear the widest row label, which in IC view is
+% something like "IC 128 (Muscle)" rather than a bare "E12" -- at 0.05 the
+% leading "I" was being cut off. Right edge stays at 0.98.
+panelX = 0.078; panelW = 0.902;
 % Vertical budget, bottom-to-top: control strip (0.012-0.077), scrollbar
 % (0.089-0.119), hypnogram + its xlabel (0.150-0.205), then this panel --
 % whose own tick labels and xlabel need the gap below 0.265 to itself.
@@ -565,7 +591,7 @@ applyRowSelection();   % builds ticks/ylim/zero-lines and redraws
         if strcmp(viewMode, 'chan')
             [sel, ok] = viewer.pickerDialog(chLabelsFull, selChanIdx, 'Select channels', ...
                 'Channels to plot (highlighted = currently shown):', ...
-                'Plot selected', {}, []);
+                'Plot selected', chanGroups, chanClass);
             if ~ok || isempty(sel), return; end   % cancelled, or selection cleared -- leave plot as-is
             selChanIdx = sel;
         else
@@ -918,8 +944,12 @@ if isfield(EEG, 'etc') && isfield(EEG.etc, 'ic_classification') && ...
     [p, cls] = max(L.classifications, [], 2);
     n = min(s.nComp, numel(cls));
     s.icClass(1:n) = cls(1:n);
+    % ICLabel's two-word class names ("Line Noise", "Channel Noise") are too
+    % wide for the y-axis gutter, so the tick form keeps just the first word.
+    % The pickers have room and show the name in full.
+    short = regexprep(s.classNames, '\s.*$', '');
     for i = 1:n
-        s.icTick{i} = sprintf('IC %d (%s)', i, s.classNames{cls(i)});
+        s.icTick{i} = sprintf('IC %d (%s)', i, short{cls(i)});
         s.icText{i} = sprintf('IC %-4d %-11s %3.0f%%', i, s.classNames{cls(i)}, p(i)*100);
     end
 end
@@ -978,4 +1008,27 @@ elseif m < 7.5, m = 5;
 else,           m = 10;
 end
 v = m * 10^e;
+end
+
+
+function tf = is1020Label(labels)
+% True for the channels the "10-20 system" group in the channel picker
+% selects: standard international 10-20 electrode names plus the bipolar
+% EOG derivations.
+%
+% Matched by NAME rather than by re-deriving qol/chans1020.m's net-specific
+% index maps, because by the time a recording reaches this viewer those
+% channels have already been RELABELLED to their 10-20 names -- and the
+% viewer has no idea which net the data came off. The list is the union of
+% what chans1020 emits for EGI256 and EGI128, plus the standard positions
+% those tables omit (Cz, Oz) and the older T3/T4/T5/T6 spellings.
+names1020 = { ...
+    'Nz', 'Fpz', 'Fp1', 'Fp2', ...
+    'F7', 'F3', 'Fz', 'F4', 'F8', ...
+    'T3', 'T7', 'C3', 'Cz', 'C4', 'T8', 'T4', ...
+    'T5', 'P7', 'P3', 'Pz', 'P4', 'P8', 'T6', ...
+    'O1', 'Oz', 'O2', ...
+    'A1', 'A2', 'M1', 'M2'};
+tf = ismember(lower(labels(:).'), lower(names1020)) | ...
+     ~cellfun(@isempty, regexpi(labels(:).', '^(v|h|l|r)?eog\d*$', 'once'));
 end
