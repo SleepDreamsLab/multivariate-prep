@@ -83,6 +83,7 @@ arguments
     opts.acqlabel   char         = '125Hz'
     opts.noteegchannels   (1,:) double = 257:300
     opts.net              char         = 'EGI256'
+    opts.targetchannelcount (1,1) double = 256
 
     %--- Subject filter ---
     opts.subjectfilter    cell          = {}
@@ -196,13 +197,17 @@ for ifile = 1:numel(filesEEG)
         %%% derivative .set does, and after bad channel removal channel k is no longer the
         %%% k-th SFP entry, so gedai.assignChanlocs leaves those alone and only falls back
         %%% to the SFP/ercp sources when they are missing.
-        EEGraw = pop_select(EEGraw, 'nochannel', intersect(1:EEGraw.nbchan, opts.noteegchannels));
+        if opts.targetchannelcount < EEGraw.nbchan
+            EEGraw = pop_select(EEGraw, 'nochannel', intersect(1:EEGraw.nbchan, opts.noteegchannels));
+        end
         EEGraw = gedai.assignChanlocs(EEGraw, BIDS, opts.sfppath, rawFile, p, fileID);
-
+        
         %%% Import "after" EEG
         fprintf('Importing after EEG ...\n')
         EEGafter = fast_eeg_import(afterFile);
-        EEGafter = pop_select(EEGafter, 'nochannel', intersect(1:EEGafter.nbchan, opts.noteegchannels));
+        if opts.targetchannelcount < EEGafter.nbchan        
+            EEGafter = pop_select(EEGafter, 'nochannel', intersect(1:EEGafter.nbchan, opts.noteegchannels));
+        end
         EEGafter = gedai.assignChanlocs(EEGafter, BIDS, opts.sfppath, rawFile, p, fileID);
 
         % %%% Removed channels
