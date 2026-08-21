@@ -12,6 +12,7 @@ addpath(genpath(['..' filesep 'bids-matlab'])) % https://github.com/bids-standar
 addpath(genpath(['..' filesep 'cleanline'])) % https://github.com/sccn/cleanline
 addpath(genpath(['..' filesep 'zapline-plus'])) % https://github.com/MariusKlug/zapline-plus
 addpath(genpath(['..' filesep 'bva-io'])) % https://github.com/sccn/bva-io
+addpath(genpath(['..' filesep 'pAMICA'])) % https://github.com/sccn/pAMICA
 
 % Brainstorm
 addpath(genpath(['..' filesep 'brainstorm3'])) % https://github.com/brainstorm-tools/brainstorm3
