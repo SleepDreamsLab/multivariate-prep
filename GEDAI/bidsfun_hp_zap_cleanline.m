@@ -33,6 +33,8 @@ function failures = bidsfun_hp_zap_cleanline(BIDS, opts)
 %   zapline         apply Zapline-plus line-noise removal       (default true)
 %   cleanline       apply CleanLine after Zapline               (default true)
 %   zapline2        apply a second Zapline-plus pass after CleanLine (default false)
+%   zapDetectionWinsize  window size in Hz for Zapline-plus' noise-peak detection,
+%                   passed through as its detectionWinsize argument   (default 6)
 %   zeropatchseconds  cut out all-zero patches (amplifier crash padding) longer than
 %                   this many seconds before filtering, restore them before saving;
 %                   0 = skip                                    (default 5)
@@ -113,6 +115,7 @@ arguments
     opts.zeropatchseconds (1,1) double   = 5
     opts.zapsigma         (1,1) double   = 5
     opts.adaptiveSigma    (1,1) logical  = false
+    opts.zapDetectionWinsize (1,1) double = 6
 
     %--- Bad channels ---
     opts.badchannels      (1,1) logical  = true
@@ -246,6 +249,7 @@ for ifile = 1:numel(filesEEG)
             'chunkLength',     opts.chunkLength, ...
             'noiseCompDetectSigma', opts.zapsigma, ...
             'adaptiveSigma',   opts.adaptiveSigma, ...
+            'detectionWinsize', opts.zapDetectionWinsize, ...
             'plotResults',     opts.plotResults);
         EEG.etc.zapline.config    = zaplineConfig;
         EEG.etc.zapline.analytics = analyticsResults;
@@ -255,7 +259,8 @@ for ifile = 1:numel(filesEEG)
             'fixedNremove',         opts.fixedNremove, ...
             'chunkLengthSeconds',   opts.chunkLength, ...
             'noiseCompDetectSigma', opts.zapsigma, ...
-            'adaptiveSigma',        opts.adaptiveSigma);
+            'adaptiveSigma',        opts.adaptiveSigma, ...
+            'detectionWinsize',     opts.zapDetectionWinsize);
         KeepTime.Zapline = toc(D);
         fprintf('ZapLine-plus: %.2f min\n', KeepTime.Zapline / 60);
 
@@ -291,6 +296,7 @@ for ifile = 1:numel(filesEEG)
             'adaptiveNremove', opts.adaptiveNremove, ...
             'fixedNremove',    opts.fixedNremove, ...
             'chunkLength',     opts.chunkLength, ...
+            'detectionWinsize', opts.zapDetectionWinsize, ...
             'plotResults',     opts.plotResults);
         KeepTime.Zapline2 = toc(D);
         fprintf('ZapLine-plus pass 2: %.2f min\n', KeepTime.Zapline2 / 60);
