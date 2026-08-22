@@ -112,6 +112,7 @@ if signal.srate > 100
         % Looping from C down to 1 preallocates X on the first (largest) iteration -
         % same trick as the original commented-out loop above.
         for c=C:-1:1
+            fprintf('Filtering channel %d/%d ...\n', c, C);
             X(:,c) = filtfilt(B,1,signal.data(c,:)');
         end
     else

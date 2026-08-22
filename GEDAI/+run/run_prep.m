@@ -59,6 +59,7 @@ if opts.removeDC
         % Overwrite each channel's row in place - EEG.data already exists at full size,
         % so this never holds a second full-size copy alongside it.
         for iCh = 1:EEG.nbchan
+            fprintf('Filtering channel %d/%d ...\n', iCh, EEG.nbchan);
             EEG.data(iCh,:) = filtfilt(EEG_DCFilter_NumDen(1,:), EEG_DCFilter_NumDen(2,:), double(EEG.data(iCh,:)));
         end
     else

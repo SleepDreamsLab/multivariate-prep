@@ -241,6 +241,7 @@ for ifile = 1:numel(filesEEG)
         % Overwrite each channel's row in place instead of filtering the whole
         % (transposed, double-cast) matrix at once - trades speed for lower peak memory.
         for iCh = 1:EEG.nbchan
+            fprintf('Filtering channel %d/%d ...\n', iCh, EEG.nbchan);
             EEG.data(iCh,:) = single(filtfilt(ICA_HiPassFilt_IIR, double(EEG.data(iCh,:))'))';
         end
     else

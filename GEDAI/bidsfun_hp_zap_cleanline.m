@@ -35,6 +35,9 @@ function failures = bidsfun_hp_zap_cleanline(BIDS, opts)
 %   zapline2        apply a second Zapline-plus pass after CleanLine (default false)
 %   zapDetectionWinsize  window size in Hz for Zapline-plus' noise-peak detection,
 %                   passed through as its detectionWinsize argument   (default 6)
+%   notchfilt       apply an IIR notch filter at 50 and 100 Hz (filterbank's
+%                   EEG_NotchFilt_IIR2) after Zapline/CleanLine, before the zero
+%                   patches are restored                              (default false)
 %   zeropatchseconds  cut out all-zero patches (amplifier crash padding) longer than
 %                   this many seconds before filtering, restore them before saving;
 %                   0 = skip                                    (default 5)
@@ -116,6 +119,7 @@ arguments
     opts.zapsigma         (1,1) double   = 5
     opts.adaptiveSigma    (1,1) logical  = false
     opts.zapDetectionWinsize (1,1) double = 6
+    opts.notchfilt        (1,1) logical  = false
 
     %--- Bad channels ---
     opts.badchannels      (1,1) logical  = true
@@ -306,6 +310,16 @@ for ifile = 1:numel(filesEEG)
             gedai.printFigure(gcf, fullfile(figDir, [fileID '_zapline2_' nm '.png']));
             pause(3); close(gcf);
         end
+    end
+
+    %%% Optional notch filter at 50/100 Hz, after Zapline/CleanLine
+    if opts.notchfilt
+        D = tic; fprintf('\nNotch filter (50/100 Hz) ...\n')
+        NotchFilters = filterbank(EEG.srate, 'EEG_NotchFilt_IIR2');
+        for iFilt = 1:numel(NotchFilters)
+            EEG.data = filtfilt(NotchFilters{iFilt}, double(EEG.data)')';
+        end
+        KeepTime.NotchFilter = toc(D);
     end
 
     %%% Put the all-zero patches back, so the saved file keeps its original length
