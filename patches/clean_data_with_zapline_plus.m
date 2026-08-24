@@ -1,14 +1,20 @@
 % LOCAL FORK of zapline-plus/clean_data_with_zapline_plus.m, shadowing the upstream copy
 % from this folder (dependancies.m adds patches after zapline-plus, so this one wins).
-% Two changes, both marked "LOCAL PATCH" in the body, both concerning the full-recording
-% pwelch calls that cost more than the cleaning itself (~1844 s of Zapline's 3022 s over
-% five nights, against 999 s in nt_zapline_plus):
+% Three changes, all marked "LOCAL PATCH" in the body:
 %   1. The raw spectrum was computed twice - once before the noise-frequency loop and
 %      again inside it. On the first frequency the input is unchanged, so the second call
-%      reuses the first result. Output identical.
+%      reuses the first result. Output identical. (Runtime: pwelch calls cost more than
+%      the cleaning itself, ~1844 s of Zapline's 3022 s over five nights, vs 999 s in
+%      nt_zapline_plus.)
 %   2. pxx_removed is now computed only when plotResults is true. Its sole consumer is
 %      the plot; no analytic reads it. It also costs a full extra copy of the recording
 %      via data-cleanData (~16 GB at 256 channels x 9 h).
+%   3. data_narrowfilt and covarianceMatrices, built for adaptive chunk detection
+%      (chunkLength=0), are cleared as soon as distances is computed. Neither was
+%      being freed before, so both sat resident (~15 GB each at 256 ch x 8 h)
+%      alongside the cleanData allocation further down, which is what pushed long
+%      recordings past 64 GB of RAM. Output identical; this only affects when memory
+%      is released, not what is computed.
 % Re-derive from upstream if zapline-plus is updated. Original help follows.
 %
 % CLEAN_DATA_WITH_ZAPLINE_PLUS - Removial of frequency artifacts using ZapLine to remove noise from EEG/MEG data. Adds
@@ -426,20 +432,29 @@ while i_noisefreq <= length(noisefreqs)
             end
             
             segment = data_narrowfilt(segmentIndices,:);
-            
+
             covarianceMatrices(:,:,iSegment) = cov(segment);
-            
+
         end
-        
+        % LOCAL PATCH: data_narrowfilt is a full-recording double array (~15 GB at
+        % 256 ch x 8 h) and is not read again after the covariance loop above; left
+        % alone it sits resident alongside covarianceMatrices and the cleanData
+        % allocation further down, which is what pushes long recordings over 64 GB.
+        clear data_narrowfilt
+
         %% find distances
         distances = zeros(nSegments-1,1);
-        
+
         for iSegment = 2:nSegments
-            
+
             distances(iSegment-1) = sum(pdist(covarianceMatrices(:,:,iSegment)-covarianceMatrices(:,:,iSegment-1)))/2;
-            
+
         end
-        
+        % LOCAL PATCH: same reasoning as data_narrowfilt above -- covarianceMatrices
+        % (nChannels x nChannels x nSegments, ~15 GB at 256 ch / 1 s segments over
+        % 8 h) is only needed to compute distances, not by anything after this point.
+        clear covarianceMatrices
+
         %% find peaks
         [pks,locs,widths,proms] = findpeaks(distances);
         [pks,locs] = findpeaks(distances,'MinPeakProminence',quantile(proms,prominenceQuantile),'MinPeakDistance',minChunkLength);
