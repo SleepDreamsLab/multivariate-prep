@@ -253,6 +253,15 @@ for ifile = 1:numel(filesEEG)
         %%% before the call, rather than sitting resident alongside the double copy
         %%% for the whole (multi-minute) duration of clean_data_with_zapline_plus.
         EEG.data = double(EEG.data);
+        %%% Transpose to [nSamples x nChannels] here rather than letting
+        %%% clean_data_with_zapline_plus transpose it internally. MATLAB cannot release
+        %%% this EEG.data field's pre-call value until the assignment below completes,
+        %%% so an internal transpose would sit resident as a second full copy of the
+        %%% recording (~15 GB at 256 ch x 8 h) for the entire multi-minute call.
+        %%% Transposing here instead pays that doubled-memory peak only briefly, before
+        %%% the call starts, since clean_data_with_zapline_plus auto-detects that data
+        %%% already has more rows than columns and skips its own transpose.
+        EEG.data = EEG.data.';
         [EEG.data, zaplineConfig, analyticsResults] = clean_data_with_zapline_plus( ...
             EEG.data, EEG.srate, ...
             'noisefreqs',      opts.noisefreqs, ...
@@ -263,6 +272,7 @@ for ifile = 1:numel(filesEEG)
             'adaptiveSigma',   opts.adaptiveSigma, ...
             'detectionWinsize', opts.zapDetectionWinsize, ...
             'plotResults',     opts.plotResults);
+        EEG.data = EEG.data.';
         EEG.etc.zapline.config    = zaplineConfig;
         EEG.etc.zapline.analytics = analyticsResults;
         EEG.etc.filterparams.Zapline = struct( ...
@@ -303,6 +313,10 @@ for ifile = 1:numel(filesEEG)
     if opts.zapline2
         D = tic; fprintf('\nZapline plus (pass 2) ...\n')
         EEG.data = double(EEG.data);
+        %%% See the memory comment on the first Zapline pass above: pre-transposing
+        %%% here avoids clean_data_with_zapline_plus holding a second full copy of the
+        %%% recording resident for the whole call.
+        EEG.data = EEG.data.';
         [EEG.data, ~, ~] = clean_data_with_zapline_plus( ...
             EEG.data, EEG.srate, ...
             'noisefreqs',      opts.noisefreqs, ...
@@ -311,6 +325,7 @@ for ifile = 1:numel(filesEEG)
             'chunkLength',     opts.chunkLength, ...
             'detectionWinsize', opts.zapDetectionWinsize, ...
             'plotResults',     opts.plotResults);
+        EEG.data = EEG.data.';
         KeepTime.Zapline2 = toc(D);
         fprintf('ZapLine-plus pass 2: %.2f min\n', KeepTime.Zapline2 / 60);
 

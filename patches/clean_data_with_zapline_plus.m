@@ -1,6 +1,6 @@
 % LOCAL FORK of zapline-plus/clean_data_with_zapline_plus.m, shadowing the upstream copy
 % from this folder (dependancies.m adds patches after zapline-plus, so this one wins).
-% Three changes, all marked "LOCAL PATCH" in the body:
+% Four changes, all marked "LOCAL PATCH" in the body:
 %   1. The raw spectrum was computed twice - once before the noise-frequency loop and
 %      again inside it. On the first frequency the input is unchanged, so the second call
 %      reuses the first result. Output identical. (Runtime: pwelch calls cost more than
@@ -15,6 +15,13 @@
 %      alongside the cleanData allocation further down, which is what pushed long
 %      recordings past 64 GB of RAM. Output identical; this only affects when memory
 %      is released, not what is computed.
+%   4. Flat-channel detection no longer allocates a full-size diff() matrix, and the
+%      matrix it used to build (diffdata) is cleared immediately if it is built at all.
+%      diffdata was never freed before, so it sat resident (~15 GB at 256 ch x 8 h)
+%      right through the first pwelch call ("Computing initial spectrum..."), which is
+%      exactly where 64 GB machines were running out of memory. Output identical: a
+%      channel is flat iff its range across the recording is zero, same condition as
+%      all(diff(x)==0), but range() never materializes a full-size derivative array.
 % Re-derive from upstream if zapline-plus is updated. Original help follows.
 %
 % CLEAN_DATA_WITH_ZAPLINE_PLUS - Removial of frequency artifacts using ZapLine to remove noise from EEG/MEG data. Adds
@@ -299,8 +306,10 @@ zaplineConfig.prominenceQuantile = prominenceQuantile;
 
 % find flat channels and store, remove from dataset to work on
 
-diffdata = diff(data);
-flat_channels_idx = find(all(diffdata==0));
+% LOCAL PATCH: range(data)==0 is the same condition as all(diff(data)==0) (a channel
+% is flat iff it never moves from its first value), but it doesn't need a full-size
+% (nSamples-1 x nChannels) diff() matrix to get there - see patch note 4 above.
+flat_channels_idx = find(range(data,1)==0);
 if ~isempty(flat_channels_idx)
     warning(['Flat channels detected (will be ignored and added back in after Zapline-plus processing): ' num2str(flat_channels_idx)])
     flat_channels_data = data(:,flat_channels_idx);
