@@ -1,0 +1,64 @@
+<#
+.SYNOPSIS
+    Clones the external GitHub dependencies listed in dependancies.m into the
+    folder one level up from this repo, and registers each one with GitHub
+    Desktop (via its `github` CLI).
+
+.DESCRIPTION
+    Repos already present at the target path are left untouched (no pull/
+    overwrite) - they are just registered with GitHub Desktop. Only missing
+    repos are freshly cloned. Folders that exist but are not git repos are
+    skipped with a warning rather than being clobbered.
+#>
+
+$ErrorActionPreference = 'Stop'
+
+$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$parent   = Split-Path -Parent $repoRoot
+
+# Mirrors the external dependencies listed in dependancies.m
+$deps = @(
+    [pscustomobject]@{ Name = 'GEDAI-master';    Url = 'https://github.com/SvennoNito/GEDAI-master.git';      Branch = 'sleep-fast' }
+    [pscustomobject]@{ Name = 'bids-matlab';      Url = 'https://github.com/bids-standard/bids-matlab.git';    Branch = $null }
+    [pscustomobject]@{ Name = 'cleanline';        Url = 'https://github.com/sccn/cleanline.git';               Branch = $null }
+    [pscustomobject]@{ Name = 'zapline-plus';     Url = 'https://github.com/MariusKlug/zapline-plus.git';      Branch = $null }
+    [pscustomobject]@{ Name = 'bva-io';           Url = 'https://github.com/sccn/bva-io.git';                  Branch = $null }
+    [pscustomobject]@{ Name = 'pAMICA';           Url = 'https://github.com/sccn/pAMICA.git';                  Branch = $null }
+    [pscustomobject]@{ Name = 'brainstorm3';      Url = 'https://github.com/brainstorm-tools/brainstorm3.git'; Branch = $null }
+    [pscustomobject]@{ Name = 'eeglab';           Url = 'https://github.com/sccn/eeglab.git';                  Branch = $null }
+    [pscustomobject]@{ Name = 'eeg-oscillations'; Url = 'https://github.com/SvennoNito/eeg-oscillations.git';  Branch = $null }
+)
+
+$githubCli = Get-Command github -ErrorAction SilentlyContinue
+if (-not $githubCli) {
+    Write-Warning "GitHub Desktop CLI ('github' command) not found on PATH. Repos will still be cloned, but won't be auto-added to GitHub Desktop - add them manually via File > Add Local Repository."
+}
+
+foreach ($dep in $deps) {
+    $target = Join-Path $parent $dep.Name
+    Write-Host "== $($dep.Name) ==" -ForegroundColor Cyan
+
+    if (-not (Test-Path $target)) {
+        Write-Host "  Cloning into $target"
+        if ($dep.Branch) {
+            git clone --branch $dep.Branch $dep.Url $target
+        }
+        else {
+            git clone $dep.Url $target
+        }
+    }
+    elseif (Test-Path (Join-Path $target '.git')) {
+        Write-Host "  Already present as a git repo - leaving contents untouched."
+    }
+    else {
+        Write-Warning "  '$target' exists but is not a git repository. Skipping - resolve manually if you want it tracked (e.g. rename it aside and re-run)."
+        continue
+    }
+
+    if ($githubCli) {
+        Write-Host "  Registering with GitHub Desktop"
+        github open $target
+    }
+}
+
+Write-Host "`nDone." -ForegroundColor Green
