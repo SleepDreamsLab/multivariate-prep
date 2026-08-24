@@ -22,6 +22,24 @@
 %      exactly where 64 GB machines were running out of memory. Output identical: a
 %      channel is flat iff its range across the recording is zero, same condition as
 %      all(diff(x)==0), but range() never materializes a full-size derivative array.
+%   5. The four whole-recording pwelch calls now run in blocks of channels, via
+%      pwelch_blocked at the bottom of this file. MATLAB's welch no longer loops
+%      over segments: it calls framesig to materialise every overlapping segment of
+%      every channel as one array before the first FFT, on top of a full copy of
+%      the input it makes first (x0 = [initCond;x]). At 50% overlap that array is
+%      ~2x the input, so a 256 ch x 9 h double recording (~15 GB) asks for ~45 GB
+%      of transient while 15 GB is already resident - the "Out of memory" at
+%      "Computing initial spectrum..." on 64 GB machines. The profiler puts the
+%      pipeline's single peak allocation (15.0 GB) and 61 GB of churn across just
+%      two pwelch calls inside framesigCoreImpl. pwelch treats columns
+%      independently, so handing it 512 MB of channels at a time returns
+%      bit-identical spectra with the transient capped near 2 GB. The
+%      pwelch(data-cleanData) call also no longer materialises the full residual;
+%      the subtraction happens per block.
+%   6. cleanData is released before the full-size NaN() that replaces it. Only the
+%      adaptive-sigma retry path re-enters that line, but when it does the old
+%      cleanData was still resident while the new one was allocated - three
+%      full-size arrays (data, old cleanData, new cleanData) instead of two.
 % Re-derive from upstream if zapline-plus is updated. Original help follows.
 %
 % CLEAN_DATA_WITH_ZAPLINE_PLUS - Removial of frequency artifacts using ZapLine to remove noise from EEG/MEG data. Adds
@@ -323,7 +341,9 @@ disp('Computing initial spectrum...')
 % compute spectrum with frequency resolution of winSizeCompleteSpectrum
 % LOCAL PATCH: keep the linear spectrum too, so the identical call inside the
 % noise-frequency loop below can reuse it rather than recompute it.
-[pxx_raw_initial,f]=pwelch(data,hanning(winSizeCompleteSpectrum*srate),[],[],srate);
+% LOCAL PATCH: blocked over channels - see patch note 5 above. This is the call
+% that ran out of memory on 64 GB machines.
+[pxx_raw_initial,f]=pwelch_blocked(data,[],hanning(winSizeCompleteSpectrum*srate),srate);
 % log transform
 pxx_raw_log = 10*log10(pxx_raw_initial);
 
@@ -506,6 +526,9 @@ while i_noisefreq <= length(noisefreqs)
     while ~cleaningDone
         
         % result data matrix
+        % LOCAL PATCH: drop the previous cleanData before allocating its
+        % replacement - see patch note 6 above.
+        cleanData = [];
         cleanData = NaN(size(data));
         
         % last chunk must be larger than the others, to ensure fft works, at least 1 chunk must be used
@@ -647,17 +670,21 @@ while i_noisefreq <= length(noisefreqs)
         if i_noisefreq == 1
             pxx_raw = pxx_raw_initial;
         else
-            [pxx_raw]=pwelch(data,hanning(winSizeCompleteSpectrum*srate),[],[],srate);
+            % LOCAL PATCH: blocked over channels - see patch note 5 above.
+            pxx_raw = pwelch_blocked(data,[],hanning(winSizeCompleteSpectrum*srate),srate);
         end
         pxx_raw_log = 10*log10(pxx_raw);
-        [pxx_clean,f]=pwelch(cleanData,hanning(winSizeCompleteSpectrum*srate),[],[],srate);
+        [pxx_clean,f]=pwelch_blocked(cleanData,[],hanning(winSizeCompleteSpectrum*srate),srate);
         pxx_clean_log = 10*log10(pxx_clean);
         % LOCAL PATCH: pxx_removed_log is consumed only by the plot further down; no
         % analytic reads it. Skipping it when nothing is drawn saves a fourth full-night
         % pwelch and, because of data-cleanData, a whole extra copy of the recording
         % (~16 GB at 256 channels x 9 h).
         if plotResults
-            [pxx_removed]=pwelch(data-cleanData,hanning(winSizeCompleteSpectrum*srate),[],[],srate);
+            % LOCAL PATCH: blocked over channels, and the data-cleanData residual is
+            % formed one block at a time rather than as a full-size temporary - see
+            % patch note 5 above.
+            pxx_removed = pwelch_blocked(data,cleanData,hanning(winSizeCompleteSpectrum*srate),srate);
             pxx_removed_log = 10*log10(pxx_removed);
         else
             pxx_removed_log = [];
@@ -1106,3 +1133,42 @@ analyticsResults.noisePeaks = resNoisePeaks;
 analyticsResults.foundNoise = resFoundNoise;
 
 disp('Cleaning with ZapLine-plus done!')
+
+
+% LOCAL PATCH: column-blocked stand-in for pwelch(A,win,[],[],srate), or for
+% pwelch(A-B,win,[],[],srate) when B is non-empty. See patch note 5 in the header.
+% pwelch's segmentation, window, nfft and per-column FFTs depend only on
+% size(x,1) and the window, never on the number of columns, so the spectra
+% returned here are bit-identical to a single whole-matrix call.
+function [pxx, f] = pwelch_blocked(A, B, win, srate)
+
+nSamples = size(A,1);
+nChannels = size(A,2);
+
+% Source bytes handed to pwelch per call. welch frames the input into an
+% overlapping-segment array (~2x the input at the 50% default overlap) plus a
+% copy of the input itself, so the transient is a few times this figure; 512 MB
+% keeps it near 2 GB whatever the recording length. The 8 bytes/sample assumes
+% double, which is what Zapline is handed here and errs small for single.
+maxBlockBytes = 512 * 2^20;
+blockChannels = max(1, floor(maxBlockBytes / max(nSamples * 8, 1)));
+
+pxx = [];
+for firstChannel = 1:blockChannels:nChannels
+
+    idx = firstChannel:min(firstChannel + blockChannels - 1, nChannels);
+
+    if isempty(B)
+        block = A(:,idx);
+    else
+        block = A(:,idx) - B(:,idx);
+    end
+
+    [pxxBlock,f] = pwelch(block,win,[],[],srate);
+
+    if isempty(pxx)
+        pxx = zeros(size(pxxBlock,1), nChannels, 'like', pxxBlock);
+    end
+    pxx(:,idx) = pxxBlock; %#ok<AGROW> pxx is preallocated on the first block
+
+end

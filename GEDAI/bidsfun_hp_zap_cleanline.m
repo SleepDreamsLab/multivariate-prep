@@ -252,11 +252,6 @@ for ifile = 1:numel(filesEEG)
     if opts.zapline
         D = tic; fprintf('\nZapline plus ...\n')
         logMemStats('before Zapline call');
-        %%% Cast to double up front: the old single-precision buffer (~7 GB at 256 ch
-        %%% x 8 h) has no references left once this assignment completes and is freed
-        %%% before the call, rather than sitting resident alongside the double copy
-        %%% for the whole (multi-minute) duration of clean_data_with_zapline_plus.
-        EEG.data = double(EEG.data);
         %%% Transpose to [nSamples x nChannels] here rather than letting
         %%% clean_data_with_zapline_plus transpose it internally. MATLAB cannot release
         %%% this EEG.data field's pre-call value until the assignment below completes,
@@ -265,7 +260,15 @@ for ifile = 1:numel(filesEEG)
         %%% Transposing here instead pays that doubled-memory peak only briefly, before
         %%% the call starts, since clean_data_with_zapline_plus auto-detects that data
         %%% already has more rows than columns and skips its own transpose.
+        %%% Transpose before the cast, not after: both steps need a second full-size
+        %%% buffer while they run, and transposing while the data is still single makes
+        %%% that buffer ~7 GB rather than ~15 GB (24 GB peak here instead of 32 GB).
         EEG.data = EEG.data.';
+        %%% Cast to double: the old single-precision buffer (~7 GB at 256 ch x 8 h)
+        %%% has no references left once this assignment completes and is freed before
+        %%% the call, rather than sitting resident alongside the double copy for the
+        %%% whole (multi-minute) duration of clean_data_with_zapline_plus.
+        EEG.data = double(EEG.data);
         [EEG.data, zaplineConfig, analyticsResults] = clean_data_with_zapline_plus( ...
             EEG.data, EEG.srate, ...
             'noisefreqs',      opts.noisefreqs, ...
@@ -316,11 +319,12 @@ for ifile = 1:numel(filesEEG)
     %%% Optional second Zapline pass
     if opts.zapline2
         D = tic; fprintf('\nZapline plus (pass 2) ...\n')
-        EEG.data = double(EEG.data);
-        %%% See the memory comment on the first Zapline pass above: pre-transposing
+        %%% See the memory comments on the first Zapline pass above: pre-transposing
         %%% here avoids clean_data_with_zapline_plus holding a second full copy of the
-        %%% recording resident for the whole call.
+        %%% recording resident for the whole call, and transposing before the cast
+        %%% keeps the transposition's temporary buffer at single precision.
         EEG.data = EEG.data.';
+        EEG.data = double(EEG.data);
         [EEG.data, ~, ~] = clean_data_with_zapline_plus( ...
             EEG.data, EEG.srate, ...
             'noisefreqs',      opts.noisefreqs, ...
