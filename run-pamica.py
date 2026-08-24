@@ -21,17 +21,19 @@ import torch
 from pamica import AMICA
 from scipy.signal import cheb2ord, cheby2, sosfiltfilt
 
+# time.sleep(1 * 30 * 60)
+
 BIDS_MAT      = Path(__file__).parent / "BidsFiles" / "BIDS_DROP.mat"
 DERIV_IN_DIR  = "prep-ged"  # derivatives subfolder to read the desc-* .set files from
 DERIV_OUT_DIR = "pamica"    # derivatives subfolder to write AMICA output under
-DESC          = "zc2gedWakeBBAutoplusFSAutoPlus" # zc
-OUT_DESC      = None  # desc entity for the AMICA output filename; None = same as DESC (the input's own desc)
-SUBJECTS      = ["drop0001"]  # None = all subjects
-SESSIONS      = ["t1"]  # None = all sessions
+DESC          = "zc2gedWakeBBAutoPlusFSAutoPlus" # zc
+OUT_DESC      = "noHP"# True # "zc2gedWakeBBAutoPlusFSAutoPlus2AmicaF32DllAutoStride4Rej0Nmodel1"  # desc entity for the AMICA output filename; None = same as DESC (the input's own desc)
+SUBJECTS      = ["drop0001"] # ["drop0001"]  # None = all subjects
+SESSIONS      = ["t1"]  # None # ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
 
 
-MAX_ITER = 500  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
+MAX_ITER = 600  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
 DO_REJECT = False  # Fortran-style outlier rejection; costs ~2x GPU memory (pamica clones the full array
                    # every iteration under do_reject, core.py:1710) -- OOMs on this recording size/GPU
 DO_NEWTON = True   # Fortran-parity Newton preconditioner (tune newt_start/newtrate via fit() kwargs)
@@ -45,6 +47,22 @@ N_MIX      = 3              # AMICA: mixture components per source
 BLOCK_SIZE = 8192           # AMICA: E-step accumulation chunk size; pure chunking, doesn't change results
 DTYPE      = torch.float32  # AMICA: compute dtype
 DEVICE     = "cuda"         # AMICA: compute device
+MIN_DLL     = 5e-7    # 1e-9 is pamica's own default (Fortran parity). Note it's below float32's LL-
+                      # accumulation noise floor (~1e-7-1e-6) and pamica logs a warning at construction
+                      # if dtype=torch.float32 with min_dll < 1e-6 -- raise this or switch DTYPE to
+                      # torch.float64 if that matters for your run.
+MAXINCS     = 5       # ...for this many consecutive iterations
+USE_MIN_DLL = True    # gate for the above; False disables the check entirely
+
+# Second, independent early-stop pAMICA added alongside min_dll (Fortran
+# use_grad_norm/min_nd): stops once the RMS weight-update norm falls to/below
+# min_nd, regardless of the LL-gain check above. This is specifically what fixes
+# the do_newton=True-on-CUDA case where lrate sits at newtrate and oscillates
+# instead of annealing -- previously nothing caught that, so max_iter was the
+# only real stop. Defaults match pamica's own (both True/1e-7); named here only
+# so they land in amica_runtime.json like every other AMICA knob.
+USE_GRAD_NORM = True  # gate for the min_nd stop; independent of USE_MIN_DLL
+MIN_ND = 1e-7          # RMS weight-update-norm threshold for the above
 
 # Decimation: ICA wants roughly MIN_SAMPLES_FACTOR x k^2 samples (k = rank kept by
 # rank_projection) to be well-determined; take every STRIDEth sample instead of
@@ -73,7 +91,6 @@ DATA_EXTENSIONS = (".set", ".vhdr")  # preference order when both exist for a re
 
 def deriv_paths(bids, desc, deriv_in):
     """Map each raw .vhdr recording in the BIDS struct onto its prep-ged derivative file.
-
     Mirrors the MATLAB filtering (bids.query(..., 'extension', '.vhdr')) then
     bids.internal.parse_filename entity join, using the ext/entities fields
     that BIDS_DROP.mat already carries per recording instead of re-deriving
@@ -113,10 +130,32 @@ def deriv_paths(bids, desc, deriv_in):
     return paths
 
 
-def output_paths(data_file, deriv_out, out_desc):
+def _fmt_small(x):
+    """Compact filename-safe tag for a small positive float: 1e-09 -> '1e9'."""
+    mantissa, exponent = f"{x:.0e}".split("e")
+    return f"{mantissa}e{abs(int(exponent))}"
+
+
+def build_auto_desc(stride):
+    """Auto-generate an output desc by appending "2amica-" plus this run's key
+    parameters onto DESC: RejX (DO_REJECT), NmodelX (N_MODELS), F32/F64 (DTYPE),
+    DllX (MIN_DLL), MaxIterX (MAX_ITER), StrideX (the decimation stride used)."""
+    dtype_tag = "F32" if DTYPE == torch.float32 else "F64"
+    return (
+        f"{DESC}2amica-Rej{int(DO_REJECT)}Nmodel{N_MODELS}{dtype_tag}"
+        f"Dll{_fmt_small(MIN_DLL)}MaxIter{MAX_ITER}Stride{stride}"
+    )
+
+
+def output_paths(data_file, deriv_out, out_desc, stride=None):
     """Derive this recording's AMICA output paths: deriv_out/sub-X/[ses-Y/]<mat_stem>,
-    where <mat_stem> is data_file's stem with its desc swapped to out_desc (default:
-    the same desc the input already has) and its trailing _eeg replaced with _amica.
+    where <mat_stem> is data_file's stem with its desc swapped to out_desc and its
+    trailing _eeg replaced with _ica.
+
+    out_desc: None = same desc as the input; True = auto-generate from this run's
+    parameters via build_auto_desc() (requires stride, since that's only known
+    after decimation -- call this after rank_projection/decimation, not before);
+    a string = use it literally.
 
     Returns (mat_path, bin_dir, json_path): the .mat file, the same-named folder for
     write_amica_output()'s binaries (no extension), and a same-named runtime json.
@@ -128,8 +167,15 @@ def output_paths(data_file, deriv_out, out_desc):
     sub = next(p for p in parts if p.startswith("sub-"))
     ses = next((p for p in parts if p.startswith("ses-")), None)
 
-    effective_desc = DESC if out_desc is None else out_desc
-    mat_stem = stem[: -len("_eeg")].replace(f"desc-{DESC}", f"desc-{effective_desc}") + "_amica"
+    if out_desc is None:
+        effective_desc = DESC
+    elif out_desc is True:
+        if stride is None:
+            raise ValueError("OUT_DESC=True requires stride -- call output_paths() after decimation")
+        effective_desc = build_auto_desc(stride)
+    else:
+        effective_desc = out_desc
+    mat_stem = stem[: -len("_eeg")].replace(f"desc-{DESC}", f"desc-{effective_desc}") + "_ica"
 
     session_dir = deriv_out / sub / ses if ses else deriv_out / sub
     return (
@@ -173,7 +219,7 @@ def read_raw(data_file):
     raise ValueError(f"unsupported derivative extension: {data_file.suffix} ({data_file})")
 
 
-def run_amica(data_file, mat_path, bin_dir, json_path):
+def run_amica(data_file, deriv_out):
     raw = read_raw(data_file)
     picks = mne.pick_types(raw.info, eeg=True, exclude="bads")
     if raw.info["bads"]:
@@ -184,8 +230,8 @@ def run_amica(data_file, mat_path, bin_dir, json_path):
     del raw
 
     print(f"{data_file.stem}: {len(labels)} channels")
-    X = highpass(X, sfreq)
-    X -= X.mean(axis=1, keepdims=True)
+    # X = highpass(X, sfreq)
+    # X -= X.mean(axis=1, keepdims=True)
     P = rank_projection(X)  # kept in float64: cheap, and wants a clean rank cut
     Xr = (P @ X).astype(np.float32)
     del X
@@ -202,9 +248,19 @@ def run_amica(data_file, mat_path, bin_dir, json_path):
     print(f"  decimation: k={k}, target >= {min_samples} samples (k^2 x {MIN_SAMPLES_FACTOR}); "
           f"stride={stride} -> {Xr.shape[1]}/{n_full} samples")
 
+    # Resolved only now: with OUT_DESC=True the filename depends on stride, which
+    # is only known post-decimation -- so the "already done" check has to live
+    # here too, after preprocessing, rather than before it like a plain-desc run.
+    mat_path, bin_dir, json_path = output_paths(data_file, deriv_out, OUT_DESC, stride)
+    if mat_path.is_file():
+        print(f"skip {data_file.stem} (already done: {mat_path.name})")
+        return None
+
     model = AMICA(n_models=N_MODELS, n_mix=N_MIX, device=DEVICE)
     t0 = time.perf_counter()
-    model.fit(Xr, max_iter=MAX_ITER, block_size=BLOCK_SIZE, dtype=DTYPE, do_reject=DO_REJECT, do_newton=DO_NEWTON)
+    model.fit(Xr, max_iter=MAX_ITER, block_size=BLOCK_SIZE, dtype=DTYPE, do_reject=DO_REJECT, do_newton=DO_NEWTON,
+              min_dll=MIN_DLL, maxincs=MAXINCS, use_min_dll=USE_MIN_DLL,
+              use_grad_norm=USE_GRAD_NORM, min_nd=MIN_ND)
     elapsed = time.perf_counter() - t0
     print(f"  AMICA fit took {elapsed / 60:.1f} min ({elapsed:.1f} s)")
 
@@ -297,6 +353,11 @@ def run_amica(data_file, mat_path, bin_dir, json_path):
                 "max_stride": MAX_STRIDE,
                 "stride": stride,
                 "n_samples": Xr.shape[1],
+                "min_dll": MIN_DLL,
+                "maxincs": MAXINCS,
+                "use_min_dll": USE_MIN_DLL,
+                "use_grad_norm": USE_GRAD_NORM,
+                "min_nd": MIN_ND,
             },
             f,
             indent=2,
@@ -311,8 +372,6 @@ if __name__ == "__main__":
     deriv_out = rawdata / "derivatives" / DERIV_OUT_DIR
 
     for data_file in deriv_paths(bids, DESC, deriv_in):
-        mat_path, bin_dir, json_path = output_paths(data_file, deriv_out, OUT_DESC)
-        if mat_path.is_file():
-            print(f"skip {data_file.stem} (already done)")
-            continue
-        print(f"{data_file.stem}: final LL = {run_amica(data_file, mat_path, bin_dir, json_path):.5f}")
+        final_ll = run_amica(data_file, deriv_out)
+        if final_ll is not None:
+            print(f"{data_file.stem}: final LL = {final_ll:.5f}")
