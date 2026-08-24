@@ -110,16 +110,19 @@ arguments
     opts.zapline          (1,1) logical  = true
     opts.cleanline        (1,1) logical  = true
     opts.zapline2         (1,1) logical  = false
+    opts.notchfilt        (1,1) logical  = false
     opts.noisefreqs                      = 50
     opts.adaptiveNremove  (1,1) logical  = true
     opts.fixedNremove     (1,1) double   = 1
-    opts.chunkLength      (1,1) double   = 300
+    opts.chunkLength      (1,1) double   = 0
     opts.plotResults      (1,1) logical  = true
     opts.zeropatchseconds (1,1) double   = 5
-    opts.zapsigma         (1,1) double   = 5
-    opts.adaptiveSigma    (1,1) logical  = false
+    opts.zapsigma         (1,1) double   = 3
+    opts.adaptiveSigma    (1,1) logical  = true
     opts.zapDetectionWinsize (1,1) double = 6
-    opts.notchfilt        (1,1) logical  = false
+
+    opts.cleanlineWinstep (1,1) double = 1
+    opts.cleanlinePad (1,1) double = 0
 
     %--- Bad channels ---
     opts.badchannels      (1,1) logical  = true
@@ -279,7 +282,7 @@ for ifile = 1:numel(filesEEG)
     if opts.cleanline
         D = tic; fprintf('\nClean line ...\n')
         clp = struct('linefreqs', [opts.noisefreqs opts.noisefreqs*2], ...
-            'winsize', 4, 'winstep', 2, 'sigtest', true, 'pad', 2);
+            'winsize', 4, 'winstep', opts.cleanlineWinstep, 'sigtest', true, 'pad', opts.cleanlinePad);
         EEG = cleanline_fast(EEG, 'linefreqs', clp.linefreqs, ...
             'winsize', clp.winsize, 'winstep', clp.winstep, ...
             'sigtest', clp.sigtest, 'pad', clp.pad);

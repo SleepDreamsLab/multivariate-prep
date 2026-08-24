@@ -39,11 +39,11 @@ function failures = bidsfun_detect_badchans(BIDS, opts)
 %                       channel fails the noise criterion                 (default 4)
 %   badchanwindowseconds  window length, in seconds, for both criteria    (default 5)
 %   badchannumsamples   number of RANSAC subsets sampled for the correlation criterion
-%                                                                          (default 25)
+%                                                                          (default 50)
 %   badchansubsetfraction  fraction of channels in each RANSAC subset     (default 0.25)
 %   flatthreshold       peak-to-peak uV below which a window is flat      (default 0.5)
 %   flatmaxbrokentime   proportion of windows failing the flat criterion above which
-%                       a channel is removed                              (default 0.3)
+%                       a channel is removed                              (default 0.4)
 %   noteegchannels      channel indices to drop                           (default 257:300)
 %   ramsaver            filter one channel at a time instead of the whole data matrix
 %                       at once (DC removal, the pre-RANSAC HP filter, and the noise
@@ -106,16 +106,16 @@ arguments
 
     %--- Bad channels ---
     opts.badchanavgref        (1,1) logical  = true
-    opts.badchanstride        (1,1) double   = 2
+    opts.badchanstride        (1,1) double   = 1
     opts.badchancorrthreshold (1,1) double   = 0.8
-    opts.badchanmaxbrokentime (1,1) double   = 0.3
+    opts.badchanmaxbrokentime (1,1) double   = 0.4
     opts.badchannoisethreshold (1,1) double  = 4
     opts.badchanwindowseconds (1,1) double   = 5
-    opts.badchannumsamples    (1,1) double   = 25
+    opts.badchannumsamples    (1,1) double   = 50
     opts.badchansubsetfraction (1,1) double  = 0.25
     opts.badchanminbrokentime (1,1) double   = .10
     opts.flatthreshold        (1,1) double   = 0.5
-    opts.flatmaxbrokentime    (1,1) double   = 0.3
+    opts.flatmaxbrokentime    (1,1) double   = 0.4
     opts.sfppath               char           = BIDS.pth
 
     %--- Subject filter ---
