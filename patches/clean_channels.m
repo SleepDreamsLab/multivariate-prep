@@ -91,22 +91,25 @@ else
     max_broken_time = round(signal.srate)*max_broken_time;
 end
 
-% RANSAC (below) needs X in double: the projector P is double, and a single x double
-% matmul falls off the BLAS fast path and converts per window; the noisiness ratio also
-% needs double, because mad(data-X) is a small difference of large numbers that cancels
-% badly in single. Tested, rejected - don't retry.
+% The noisiness ratio (mad(data-X)/mad(X) below) needs double: it is a small difference
+% of large, nearly-equal numbers and cancels badly in single. That precision need is
+% local to this ratio, though - once it is computed, nothing downstream needs X in
+% double. The RANSAC correlation loop only ever forms cosine-similarity-like ratios
+% between filtered signals (never a difference of near-equal quantities), so X is
+% downcast to single right after noisiness is computed, and the projector P is built in
+% single to match: a single x single matmul stays on the BLAS fast path (it is only
+% single x double, i.e. mismatched types, that was measured 6x slower - not single
+% itself). This halves the one array that has to survive the whole RANSAC scan (X is
+% full-recording length; ~13.7 GB double at 256 ch x 8 h x 250 Hz becomes ~6.9 GB).
 %
 % signal.data itself, however, is deliberately NOT cast to double here. It used to be
 % (`signal.data = double(signal.data)`), unconditionally, ramsaver or not - a full extra
-% double-sized copy of the whole recording (~13.7 GB at 256 ch x 8 h x 250 Hz) held
-% alive purely so the noisiness ratio below could subtract it from X. That copy is never
-% used for anything else: the caller (detectBadChannels/smartcache) discards this
-% function's `signal` output entirely and keeps only removed_channels/corrs/znoise. So
-% under ramsaver, X and the noisiness ratio are now computed one channel at a time
-% instead, and signal.data is cast to double only per-channel, transiently. Peak memory
-% drops by roughly two full-recording double copies (the old signal.data cast, and its
-% transpose at the old `signal.data'-X`) - the only full-size double array still held is
-% X itself, which the RANSAC step below needs intact regardless.
+% double-sized copy of the whole recording held alive purely so the noisiness ratio
+% below could subtract it from X. That copy is never used for anything else: the caller
+% (detectBadChannels/smartcache) discards this function's `signal` output entirely and
+% keeps only removed_channels/corrs/znoise. So under ramsaver, X and the noisiness ratio
+% are computed one channel at a time instead, and signal.data is cast to double only
+% per-channel, transiently.
 [C,S] = size(signal.data);
 window_len = window_len*round(signal.srate);
 wnd = 0:window_len-1;
@@ -130,25 +133,29 @@ if signal.srate > 100
     if ramsaver
         % Looping from C down to 1 preallocates X on the first (largest) iteration -
         % same trick as the original commented-out loop above. Each channel's double
-        % cast, filter output, and noisiness ratio are computed together and the raw
-        % double copy dropped immediately, so no full-recording double copy of
-        % signal.data (or of signal.data'-X) is ever held alongside X.
+        % cast, filter output, and noisiness ratio are computed together in double and
+        % the raw double copy dropped immediately; only the single-cast filtered column
+        % is kept, so X accumulates as single from the start and no full-recording
+        % double copy of signal.data (or of signal.data'-X) is ever held alongside it.
         noisiness = zeros(1,C);
         for c=C:-1:1
             fprintf('Filtering channel %d/%d ...\n', c, C);
             raw_c = double(signal.data(c,:))';
-            X(:,c) = filtfilt(B,1,raw_c);
-            noisiness(c) = mad(raw_c-X(:,c))./mad(X(:,c),1);
+            Xc = filtfilt(B,1,raw_c);
+            noisiness(c) = mad(raw_c-Xc)./mad(Xc,1);
+            X(:,c) = single(Xc);
         end
     else
-        X = filtfilt(B, 1, double(signal.data'));
-        noisiness = mad(double(signal.data)'-X)./mad(X,1);
+        Xd = filtfilt(B, 1, double(signal.data'));
+        noisiness = mad(double(signal.data)'-Xd)./mad(Xd,1);
+        X = single(Xd);
+        clear Xd
     end
     znoise = (noisiness - median(noisiness)) ./ (mad(noisiness,1)*1.4826);
     % trim channels based on that
     noise_mask = znoise > noise_threshold;
 else
-    X = double(signal.data)';
+    X = single(signal.data)';
     noise_mask = false(C,1)'; % transpose added. Otherwise gives an error below at removed_channels = removed_channels | noise_mask';  (by Ozgur Balkan)
 end
 
@@ -160,8 +167,9 @@ if ~(isfield(signal.chanlocs,'X') && isfield(signal.chanlocs,'Y') && isfield(sig
 usable_channels = find(~cellfun('isempty',x) & ~cellfun('isempty',y) & ~cellfun('isempty',z));
 locs = [cell2mat(x(usable_channels));cell2mat(y(usable_channels));cell2mat(z(usable_channels))];
 % Skip the reindex when it would be a no-op (the normal case once chanlocs-less
-% channels are already filtered out upstream): X is full-recording double, so
-% X(:,usable_channels) otherwise allocates a second ~13.7 GB copy for nothing.
+% channels are already filtered out upstream): X is full-recording length, so
+% X(:,usable_channels) otherwise allocates a second copy (~6.9 GB single at 256 ch x
+% 8 h x 250 Hz) for nothing.
 if numel(usable_channels) ~= C || ~isequal(usable_channels(:)', 1:C)
     X = X(:,usable_channels);
 end
@@ -236,7 +244,12 @@ for k=num_samples:-1:1
     tmp(subset,:) = real(sphericalSplineInterpolate(locs(:,subset),locs))';
     rand_samples{k} = tmp;
 end
-P = horzcat(rand_samples{:});
+% sphericalSplineInterpolate solves its linear system in double for numerical
+% stability, but the resulting weights are only ever used in a matmul against X
+% (single, see above) - single here keeps that matmul on the BLAS fast path and
+% halves P's own footprint (C x C*num_samples: ~26 MB double at 256 ch/50 samples,
+% not the bottleneck, but no reason to leave it mismatched with X).
+P = single(horzcat(rand_samples{:}));
 
 
 function Y = randsample(X,num)
