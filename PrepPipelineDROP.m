@@ -5,10 +5,14 @@ clc; close all
 %%% Dependancies
 run('dependancies.m')
 
+%%% Define home path
+home = '\\vs03.herseninstituut.knaw.nl' % windows
+% home = '/home/sleach'; % ubuntu
+
 %%% Build BIDS structure from data folder
 %%% BIDS structure contains all pathing and subject information
 [BIDS_DROP] = smartcache( ...
-    @() bidswizard({'data-drop'}, '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin', 'rawdata'), ...
+    @() bidswizard({'data-drop'}, fullfile(home, 'VS03-SandC-1', 'data', 'nin'), 'rawdata'), ...
     fullfile(pwd, 'BidsFiles', 'BIDS_DROP.mat'), false, {'BIDS_DROP'}); 
 BIDS = BIDS_DROP{1}; fails = [];
 
@@ -19,8 +23,8 @@ refreshFigures  = false; % re-run when figures alreaady exist
 targetsrate     = 250;   % down-sample to this srate
 removeDC        = false; % apply 0.1 Hz high-pass filter?
 derivfolder     = 'prep-zc-ged'; % name of output folder within derivatives folder
-scoringpath     = fullfile(BIDS.pth, '..\derivatives\scores\final'); % where to find scoring files
-leadfieldpath   = '\\vs03.herseninstituut.knaw.nl\VS03-SandD-4\PM\Data_Analysis\Brainstorm_db\DROP_Leadfields2\data'; % where to find leadfield matrices
+scoringpath     = fullfile(BIDS.pth, '..', 'derivatives', 'scores', 'final'); % where to find scoring files
+leadfieldpath   = fullfile('home', 'VS03-SandD-4', 'PM', 'Data_Analysis', 'Brainstorm_db', 'DROP_Leadfields2', 'data'); % where to find leadfield matrices
 BIDS.description = []; BIDS.description.Name = 'DROP'; % some actions are project specific (e.g., chanlocs import)
 
 % "desc" labels 
