@@ -127,7 +127,7 @@ colormap(ax_raw, custom_cmap());
 cb = colorbar; cb.Label.String = 'log_{10}(\muV^2/Hz)'; cb.FontSize = 9;
 xlabel('Time (min)', 'FontSize', 10);
 ylabel('Frequency (Hz)', 'FontSize', 10);
-title(sprintf('before GEDAI  (%s)', opts.ChanLabel), 'FontSize', 11, 'FontWeight', 'bold');
+title(sprintf('before  (%s)', opts.ChanLabel), 'FontSize', 11, 'FontWeight', 'bold');
 set(ax_raw, 'FontSize', 10, 'Box', 'off', 'TickDir', 'out', 'YDir', 'normal');
 
 ax_clean = nexttile(16, [7 1]); hold on;
@@ -137,7 +137,7 @@ colormap(ax_clean, custom_cmap());
 cb = colorbar; cb.Label.String = 'log_{10}(\muV^2/Hz)'; cb.FontSize = 9;
 xlabel('Time (min)', 'FontSize', 10);
 ylabel('Frequency (Hz)', 'FontSize', 10);
-title(sprintf('after GEDAI  (%s)', opts.ChanLabel), 'FontSize', 11, 'FontWeight', 'bold');
+title(sprintf('after  (%s)', opts.ChanLabel), 'FontSize', 11, 'FontWeight', 'bold');
 set(ax_clean, 'FontSize', 10, 'Box', 'off', 'TickDir', 'out', 'YDir', 'normal');
 
 linkaxes([ax_hyp, ax_exp, ax_raw, ax_clean], 'x');

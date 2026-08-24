@@ -161,13 +161,30 @@ for iGroup = 1:nGroups
     %                   costs (broadcast copy, MODWT scratch, clean_EEG's
     %                   output buffers) dominate instead — hence no strong
     %                   per-band variation left to calibrate against.
-    %    16x carries ~5% headroom over the measured ceiling; the pre-existing
+    %    16x carried ~5% headroom over that measured ceiling; the pre-existing
     %    SAFETY factor below covers the rest. Re-measure if channel count,
     %    MODWT extraction (e.g. porting stateful_modwt_single_band), or
     %    clean_EEG's output buffering changes again.
-    BYTES_PER_SAMPLE_CH = 8 * 16;   % 8 B double x ~16 working copies
-    SAFETY              = 1.00;      % leave headroom for client + OS cache
-    MAX_WORKERS         = 12;
+    %
+    %    Halved to 8x on switching GEDAI to parallel = 'blocks'. The 15-16x
+    %    figure was dominated by each worker holding a whole band; under block
+    %    parallelism a worker holds one time block instead, so the per-worker
+    %    peak is a fraction of the band. 8x is a deliberately conservative
+    %    stand-in for that - it has NOT been measured the way the 15.2x was, so
+    %    if a night starts swapping this is the first number to re-measure.
+    BYTES_PER_SAMPLE_CH = 8 * 1;    % 8 B double x ~8 working copies (blocks)
+    SAFETY              = 0.99;      % leave headroom for client + OS cache
+    %%% GEDAI is called with parallel = 'blocks', so the band loop runs serially and the
+    %%% parfor is over time blocks within each band. That removes the old ceiling: there
+    %%% are far more blocks than the 11 wavelet bands, and they are equal-sized, so extra
+    %%% workers keep earning instead of idling. (The band-count cap that used to live
+    %%% here applied to parallel = true, where the loop had one task per band.)
+    %%% The ceiling is now whatever the local cluster profile allows. Inf does not work:
+    %%% the memory formula below can exceed the profile's NumWorkers, and parpool errors
+    %%% when asked for more workers than the cluster has. Raise it in the Parallel
+    %%% preferences ("Processes" profile) if you want more than this reports.
+    localCluster = parcluster('Processes');
+    MAX_WORKERS  = localCluster.NumWorkers;
 
     LOAD_NOW = EEGstageGroup.pnts * EEGstageGroup.nbchan;
     perWorkerBytes = LOAD_NOW * BYTES_PER_SAMPLE_CH;
@@ -200,7 +217,7 @@ for iGroup = 1:nGroups
         if wantThreads
             parpool('Threads', nWorkers);
         else
-            c = parcluster('Processes');
+            c = localCluster;       % same object the worker cap was read from
             oldNT = c.NumThreads;
             c.NumThreads = 1;
             parpool(c, nWorkers);
@@ -223,7 +240,7 @@ for iGroup = 1:nGroups
     [EEGcleanGroup, ~, SENSAI_score, SENSAI_score_per_band, ...
         artifact_threshold_per_band, mean_ENOVA, ENOVA_per_epoch] = ...
         GEDAI(EEGstageGroup, gedaiMode, gedaiModeBB, opts.GEDAIEpochSize, ...
-              opts.GEDAILowCutOffFreq, gedaiRefMatrix, true, 0, [], opts.GEDAIEnovaChannelThreshold, [], ...
+              opts.GEDAILowCutOffFreq, gedaiRefMatrix, 'blocks', 0, [], opts.GEDAIEnovaChannelThreshold, [], ...
               opts.MovAvgSize, opts.BBEpochSize, opts.BroadbandOnly, opts.PercentileThreshold, opts.BBMinThreshold, opts.ComputeSENSAI);
     gedaiTime = gedaiTime + toc(D);
 

@@ -1,4 +1,4 @@
-function [signal,removed_channels, corrs, znoise] = clean_channels(signal,corr_threshold,noise_threshold,window_len,max_broken_time,num_samples,subset_size,window_stride)
+function [signal,removed_channels, corrs, znoise] = clean_channels(signal,corr_threshold,noise_threshold,window_len,max_broken_time,num_samples,subset_size,window_stride,ramsaver)
 % Remove channels with abnormal data from a continuous data set.
 % Signal = clean_channels(Signal,CorrelationThreshold,LineNoiseThreshold,WindowLength,MaxBrokenTime,NumSamples,SubsetSize)
 %
@@ -36,8 +36,12 @@ function [signal,removed_channels, corrs, znoise] = clean_channels(signal,corr_t
 %                sampling consensus process. The larger this value, the more robust but also slower 
 %                the processing will be. Default: 50.
 %
-%   SubsetSize : Subset size. This is the size of the channel subsets to use for robust reconstruction, 
+%   SubsetSize : Subset size. This is the size of the channel subsets to use for robust reconstruction,
 %                as a fraction of the total number of channels. Default: 0.25.
+%
+%   RamSaver : (local addition) if true, the >50Hz removal filter is applied one channel
+%              at a time instead of to the whole data matrix at once, trading speed for a
+%              lower peak memory footprint. Default: false.
 %
 % Out:
 %   Signal : data set with bad channels removed
@@ -72,6 +76,11 @@ if ~exist('reset_rng','var') || isempty(reset_rng) reset_rng = true; end
 % night the proportion is still estimated from ~3300 windows, s.e. ~0.9%. Only channels
 % sitting within about a percentage point of the threshold can flip. 1 = original.
 if ~exist('window_stride','var') || isempty(window_stride) window_stride = 1; end
+% RAM SAVER (local addition): filter one channel at a time instead of the whole
+% signal.data matrix at once. filtfilt on the full transposed matrix briefly holds
+% several full-size copies (transpose, double-cast, filtered output) at once; looping
+% keeps only one channel's vector live at a time, at the cost of speed. Off by default.
+if ~exist('ramsaver','var') || isempty(ramsaver) ramsaver = false; end
 
 subset_size = round(subset_size*size(signal.data,1)); 
 
@@ -99,8 +108,16 @@ fprintf('Scanning for bad channels...\n');
 if signal.srate > 100
     % remove signal content above 50Hz
     B = firls(100,[2*[0 45 50]/signal.srate 1],[1 1 0 0]);
-    for c=signal.nbchan:-1:1
-        X(:,c) = filtfilt(B,1,signal.data(c,:)'); end
+    if ramsaver
+        % Looping from C down to 1 preallocates X on the first (largest) iteration -
+        % same trick as the original commented-out loop above.
+        for c=C:-1:1
+            fprintf('Filtering channel %d/%d ...\n', c, C);
+            X(:,c) = filtfilt(B,1,signal.data(c,:)');
+        end
+    else
+        X = filtfilt(B, 1, signal.data');
+    end
     % determine z-scored level of EM noise-to-signal ratio for each channel
     % TRIED AND REJECTED: dividing by median(mad(X,1)) - the typical channel's
     % low-frequency amplitude - instead of by each channel's own, on the theory that the

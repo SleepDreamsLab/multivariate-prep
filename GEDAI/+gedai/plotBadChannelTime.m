@@ -4,56 +4,54 @@ function plotBadChannelTime(corr, removed, savefile, opts)
 %   gedai.plotBadChannelTime(corr, removed, savefile)
 %
 %   corr and removed are the per-window correlations and the bad channel mask returned
-%   by clean_channels (EEG.etc.badchans.corr / .mask). Flagged channels are drawn on
-%   top, a sample of retained channels below a red divider for reference.
+%   by clean_channels (EEG.etc.badchans.corr / .mask). Every channel is drawn, ordered
+%   top-to-bottom by proportion of low-correlation windows (opts.corrThreshold) - the same
+%   quantity the correlation criterion itself decides on - so the worst channels sit at the
+%   top regardless of whether they crossed maxBrokenTime and were actually removed. Flagged
+%   (removed) channels are marked with a "*" in their row label.
 %
 %   The topoplot in gedai.plotBadChannels answers "which channels", this answers "when
 %   and how badly": whether a channel is broken all night or only in bouts, and how far
 %   past threshold it sits. A contact that dries out shows up as a channel that is clean
-%   early and degrades monotonically; one that settles in does the reverse. Both are
-%   removed for the whole recording, so it is worth seeing which you have.
+%   early and degrades monotonically; one that settles in does the reverse.
 
 arguments
     corr      double
     removed   logical
     savefile  char
     opts.windowseconds (1,1) double = 5    % clean_channels default window length
-    opts.nrefchans     (1,1) double = 6
+    opts.corrThreshold (1,1) double = 0.7  % clean_channels default correlation threshold
     opts.nbins         (1,1) double = 300
     opts.clim          (1,2) double = [0.3 1]
     opts.title         char         = ''
 end
 
-W    = size(corr, 2);
-flag = find(removed(:))';
-good = find(~removed(:))';
-if isempty(good), warning('gedai:plotBadChannelTime:noGoodChans', 'No retained channels.'); return, end
-good = good(round(linspace(1, numel(good), min(opts.nrefchans, numel(good)))));
-rows = [flag(:); good(:)];
+[nChan, W]  = size(corr);
+lowcorrprop = sum(corr < opts.corrThreshold, 2) / W;
+[~, order]  = sort(lowcorrprop, 'descend');
 
 %%% Average the windows into bins so a full night stays legible
 nb    = max(1, min(opts.nbins, W));
 edges = round(linspace(0, W, nb+1));
-M     = zeros(numel(rows), nb);
-for iRow = 1:numel(rows)
-    for iBin = 1:nb
-        M(iRow,iBin) = mean(corr(rows(iRow), edges(iBin)+1:edges(iBin+1)));
-    end
+M     = zeros(nChan, nb);
+for iBin = 1:nb
+    M(:, iBin) = mean(corr(order, edges(iBin)+1:edges(iBin+1)), 2);
 end
 binHours = (edges(1:end-1) + edges(2:end)) / 2 * opts.windowseconds / 3600;
 
-figure('Color', 'w', 'Position', [100 100 1100 620]);
-imagesc(binHours, 1:numel(rows), M); clim(opts.clim)
-colormap(flipud(gray));
+figure('Color', 'w', 'Position', [100 100 1100 max(720, 8*nChan)]);
+imagesc(binHours, 1:nChan, M); clim(opts.clim)
+% colormap(flipud(gray));
+colormap(gray);
 cb = colorbar; cb.Label.String = sprintf('RANSAC correlation (%g-s windows)', opts.windowseconds);
-set(gca, 'YTick', 1:numel(rows), 'FontSize', 8, 'YTickLabel', ...
-    [arrayfun(@(c) sprintf('E%d *', c), flag(:), 'uni', 0); ...
-     arrayfun(@(c) sprintf('E%d',   c), good(:), 'uni', 0)]);
-yline(numel(flag) + 0.5, 'r-', 'LineWidth', 2);
+labels = compose('E%d', order(:));
+labels(removed(order)) = strcat(labels(removed(order)), ' *');
+set(gca, 'YTick', 1:nChan, 'FontSize', 8, 'YTickLabel', cellstr(labels))
 xlabel('hours into recording')
-title({opts.title, sprintf(['%d flagged (*), %d retained channels shown for reference; ' ...
-    'brighter = worse'], numel(flag), numel(good))}, 'Interpreter', 'none')
+title({opts.title, sprintf(['%d/%d channels flagged (*); ordered by proportion of low-' ...
+    'correlation windows, worst at top; darker = worse'], nnz(removed), nChan)}, ...
+    'Interpreter', 'none')
 
-print(gcf, savefile, '-dpng', '-r100');
+gedai.printFigure(gcf, savefile);
 close
 end
