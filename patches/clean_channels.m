@@ -91,12 +91,22 @@ else
     max_broken_time = round(signal.srate)*max_broken_time;
 end
 
-% Keep this in double. Working in single looks tempting (the recording arrives as single,
-% so the promotion adds no information) but measured 6x SLOWER: the RANSAC projector P is
-% double, and a single x double matmul falls off the BLAS fast path and converts per
-% window. It also shifted znoise by up to 13.7 z-units, because mad(data-X) is a small
-% difference of large numbers and cancels badly in single. Tested, rejected - don't retry.
-signal.data = double(signal.data);
+% RANSAC (below) needs X in double: the projector P is double, and a single x double
+% matmul falls off the BLAS fast path and converts per window; the noisiness ratio also
+% needs double, because mad(data-X) is a small difference of large numbers that cancels
+% badly in single. Tested, rejected - don't retry.
+%
+% signal.data itself, however, is deliberately NOT cast to double here. It used to be
+% (`signal.data = double(signal.data)`), unconditionally, ramsaver or not - a full extra
+% double-sized copy of the whole recording (~13.7 GB at 256 ch x 8 h x 250 Hz) held
+% alive purely so the noisiness ratio below could subtract it from X. That copy is never
+% used for anything else: the caller (detectBadChannels/smartcache) discards this
+% function's `signal` output entirely and keeps only removed_channels/corrs/znoise. So
+% under ramsaver, X and the noisiness ratio are now computed one channel at a time
+% instead, and signal.data is cast to double only per-channel, transiently. Peak memory
+% drops by roughly two full-recording double copies (the old signal.data cast, and its
+% transpose at the old `signal.data'-X`) - the only full-size double array still held is
+% X itself, which the RANSAC step below needs intact regardless.
 [C,S] = size(signal.data);
 window_len = window_len*round(signal.srate);
 wnd = 0:window_len-1;
@@ -108,16 +118,6 @@ fprintf('Scanning for bad channels...\n');
 if signal.srate > 100
     % remove signal content above 50Hz
     B = firls(100,[2*[0 45 50]/signal.srate 1],[1 1 0 0]);
-    if ramsaver
-        % Looping from C down to 1 preallocates X on the first (largest) iteration -
-        % same trick as the original commented-out loop above.
-        for c=C:-1:1
-            fprintf('Filtering channel %d/%d ...\n', c, C);
-            X(:,c) = filtfilt(B,1,signal.data(c,:)');
-        end
-    else
-        X = filtfilt(B, 1, signal.data');
-    end
     % determine z-scored level of EM noise-to-signal ratio for each channel
     % TRIED AND REJECTED: dividing by median(mad(X,1)) - the typical channel's
     % low-frequency amplitude - instead of by each channel's own, on the theory that the
@@ -127,12 +127,28 @@ if signal.srate > 100
     % flagged count rose from 13 to 19. Those electrodes genuinely carry far more >45 Hz
     % energy than the rest of the head - plausibly because the net's lead bundle exits at
     % the vertex - so no denominator and no threshold can separate them. Kept upstream.
-    noisiness = mad(signal.data'-X)./mad(X,1);
-    znoise = (noisiness - median(noisiness)) ./ (mad(noisiness,1)*1.4826);        
+    if ramsaver
+        % Looping from C down to 1 preallocates X on the first (largest) iteration -
+        % same trick as the original commented-out loop above. Each channel's double
+        % cast, filter output, and noisiness ratio are computed together and the raw
+        % double copy dropped immediately, so no full-recording double copy of
+        % signal.data (or of signal.data'-X) is ever held alongside X.
+        noisiness = zeros(1,C);
+        for c=C:-1:1
+            fprintf('Filtering channel %d/%d ...\n', c, C);
+            raw_c = double(signal.data(c,:))';
+            X(:,c) = filtfilt(B,1,raw_c);
+            noisiness(c) = mad(raw_c-X(:,c))./mad(X(:,c),1);
+        end
+    else
+        X = filtfilt(B, 1, double(signal.data'));
+        noisiness = mad(double(signal.data)'-X)./mad(X,1);
+    end
+    znoise = (noisiness - median(noisiness)) ./ (mad(noisiness,1)*1.4826);
     % trim channels based on that
     noise_mask = znoise > noise_threshold;
 else
-    X = signal.data';
+    X = double(signal.data)';
     noise_mask = false(C,1)'; % transpose added. Otherwise gives an error below at removed_channels = removed_channels | noise_mask';  (by Ozgur Balkan)
 end
 
@@ -143,7 +159,12 @@ if ~(isfield(signal.chanlocs,'X') && isfield(signal.chanlocs,'Y') && isfield(sig
 [x,y,z] = deal({signal.chanlocs.X},{signal.chanlocs.Y},{signal.chanlocs.Z});
 usable_channels = find(~cellfun('isempty',x) & ~cellfun('isempty',y) & ~cellfun('isempty',z));
 locs = [cell2mat(x(usable_channels));cell2mat(y(usable_channels));cell2mat(z(usable_channels))];
-X = X(:,usable_channels);
+% Skip the reindex when it would be a no-op (the normal case once chanlocs-less
+% channels are already filtered out upstream): X is full-recording double, so
+% X(:,usable_channels) otherwise allocates a second ~13.7 GB copy for nothing.
+if numel(usable_channels) ~= C || ~isequal(usable_channels(:)', 1:C)
+    X = X(:,usable_channels);
+end
   
 % caculate all-channel reconstruction matrices from random channel subsets   
 if reset_rng
