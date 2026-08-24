@@ -365,8 +365,13 @@ function [signal, removed_channels, corrs, znoise, flatprop] = detectBadChannels
 % Kept together so the mask written to the cache is the mask actually applied to the
 % data: bidsfun_gedai reads it back to pick the matching rows of the leadfield, and a
 % cache holding only part of the criteria would silently desync from the saved file.
+% The trailing false is applyremoval: this stage wants the mask, not the pruned data.
+% `signal` is collected only to keep the positional outputs lined up and is dropped by
+% the '' placeholder in the smartcache call above, so letting clean_channels run
+% pop_select would allocate a second near-full-size copy of the recording purely to
+% throw it away.
 [signal, removed_channels, corrs, znoise] = clean_channels(EEG, ...
     bcp.corrThreshold, bcp.noiseThreshold, bcp.windowSeconds, bcp.maxBrokenTime, ...
-    bcp.numSamples, bcp.subsetSizeFraction, bcp.windowStride, bcp.ramsaver);
+    bcp.numSamples, bcp.subsetSizeFraction, bcp.windowStride, bcp.ramsaver, false);
 removed_channels = removed_channels(:) | flatmask(:);
 end

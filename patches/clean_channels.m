@@ -1,4 +1,4 @@
-function [signal,removed_channels, corrs, znoise] = clean_channels(signal,corr_threshold,noise_threshold,window_len,max_broken_time,num_samples,subset_size,window_stride,ramsaver)
+function [signal,removed_channels, corrs, znoise] = clean_channels(signal,corr_threshold,noise_threshold,window_len,max_broken_time,num_samples,subset_size,window_stride,ramsaver,applyremoval)
 % Remove channels with abnormal data from a continuous data set.
 % Signal = clean_channels(Signal,CorrelationThreshold,LineNoiseThreshold,WindowLength,MaxBrokenTime,NumSamples,SubsetSize)
 %
@@ -43,6 +43,11 @@ function [signal,removed_channels, corrs, znoise] = clean_channels(signal,corr_t
 %              at a time instead of to the whole data matrix at once, trading speed for a
 %              lower peak memory footprint. Default: false.
 %
+%   ApplyRemoval : (local addition) if false, the flagged channels are reported in
+%                  removed_channels but not actually dropped from the returned Signal,
+%                  which is handed back untouched. For callers that only want the mask,
+%                  this skips a full-size copy of the recording. Default: true.
+%
 % Out:
 %   Signal : data set with bad channels removed
 %
@@ -81,6 +86,14 @@ if ~exist('window_stride','var') || isempty(window_stride) window_stride = 1; en
 % several full-size copies (transpose, double-cast, filtered output) at once; looping
 % keeps only one channel's vector live at a time, at the cost of speed. Off by default.
 if ~exist('ramsaver','var') || isempty(ramsaver) ramsaver = false; end
+% APPLY REMOVAL (local addition): whether to actually drop the flagged channels from
+% signal.data before returning. The caller here (detectBadChannels, via smartcache)
+% keeps only removed_channels/corrs/znoise and discards the `signal` output entirely,
+% so the pop_select at the bottom is pure cost - a fresh near-full-size copy of the
+% recording, taken while X is still live. With this false nothing ever writes to
+% signal, so copy-on-write hands the struct back for free. The >75% sanity error is
+% raised either way. Default true, i.e. stock behaviour.
+if ~exist('applyremoval','var') || isempty(applyremoval) applyremoval = true; end
 
 subset_size = round(subset_size*size(signal.data,1)); 
 
@@ -131,14 +144,20 @@ if signal.srate > 100
     % energy than the rest of the head - plausibly because the net's lead bundle exits at
     % the vertex - so no denominator and no threshold can separate them. Kept upstream.
     if ramsaver
-        % Looping from C down to 1 preallocates X on the first (largest) iteration -
-        % same trick as the original commented-out loop above. Each channel's double
-        % cast, filter output, and noisiness ratio are computed together in double and
-        % the raw double copy dropped immediately; only the single-cast filtered column
-        % is kept, so X accumulates as single from the start and no full-recording
-        % double copy of signal.data (or of signal.data'-X) is ever held alongside it.
+        % One channel at a time: the double cast, the filter output and the noisiness
+        % ratio are formed together in double and dropped at the end of each iteration,
+        % so no full-recording double copy of signal.data (or of signal.data'-X) is ever
+        % held. X is preallocated single up front rather than grown by a descending loop
+        % (the older trick, which relied on the first assignment being the widest AND
+        % single-valued to fix the array's size and class - reverse the loop and you
+        % silently get a double X twice the size).
+        %
+        % filtfilt reduces column-wise and independently per column, so this produces
+        % bit-identical X and noisiness to the whole-matrix branch below. The two
+        % branches differ only in peak memory and speed, never in results.
         noisiness = zeros(1,C);
-        for c=C:-1:1
+        X = zeros(S,C,'single');
+        for c=1:C
             fprintf('Filtering channel %d/%d ...\n', c, C);
             raw_c = double(signal.data(c,:))';
             Xc = filtfilt(B,1,raw_c);
@@ -147,7 +166,19 @@ if signal.srate > 100
         end
     else
         Xd = filtfilt(B, 1, double(signal.data'));
-        noisiness = mad(double(signal.data)'-Xd)./mad(Xd,1);
+        % Per channel even here. mad() is a column-wise reduction, so the whole-matrix
+        % form (`mad(double(signal.data)'-Xd)`) buys nothing and costs three separate
+        % full-size double temporaries live at once - the cast, its transpose, and the
+        % difference - on top of Xd. That single line peaked near 66 GB at 256 ch x 8 h
+        % x 250 Hz, more than the stock version it was derived from (which at least had
+        % signal.data already in double, so the cast was free). The loop holds one
+        % channel's worth instead.
+        noisiness = zeros(1,C);
+        for c=1:C
+            noisiness(c) = mad(double(signal.data(c,:))'-Xd(:,c))./mad(Xd(:,c),1);
+        end
+        % Still the one unavoidable spike on this branch: double Xd and single X coexist
+        % until the clear (~22 GB at the size above). ramsaver avoids it entirely.
         X = single(Xd);
         clear Xd
     end
@@ -194,8 +225,13 @@ for o=1:W
     fprintf('clean_channel: %3.0d/%d blocks, %.1f minutes remaining.\n', o, W, medianTimePassed*(W-o)/60); % makoto
 end
         
+% X and P (plus the loop's last XX/YY) are dead from here on and are the bulk of this
+% function's footprint - X alone is ~6.9 GB single at 256 ch x 8 h x 250 Hz. Drop them
+% before the removal block below, which is where the next large allocation happens.
+clear X P XX YY
+
 flagged = corrs < corr_threshold;
-        
+
 % mark all channels for removal which have more flagged samples than the maximum number of
 % ignored samples
 removed_channels = false(C,1);
@@ -207,7 +243,7 @@ removed_channels = removed_channels | noise_mask';
 % apply removal
 if mean(removed_channels) > 0.75
     error('clean_channels:bad_chanlocs','More than 75%% of your channels were removed -- this is probably caused by incorrect channel location measurements (e.g., wrong cap design).');
-elseif any(removed_channels)
+elseif applyremoval && any(removed_channels)
     try
         signal = pop_select(signal,'nochannel',find(removed_channels));
     catch e
