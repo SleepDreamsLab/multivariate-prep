@@ -29,6 +29,39 @@ $deps = @(
     [pscustomobject]@{ Name = 'eeg-oscillations'; Url = 'https://github.com/SvennoNito/eeg-oscillations.git';  Branch = $null }
 )
 
+# PATH is only refreshed for new processes, so a terminal opened before Git
+# was installed won't see it yet even though `git --version` works elsewhere.
+# Fall back to the registry (Git for Windows always records its InstallPath
+# there) and then to every drive letter, since Git isn't always on C:.
+$git = (Get-Command git -ErrorAction SilentlyContinue).Source
+
+if (-not $git) {
+    $regPaths = @(
+        'HKLM:\SOFTWARE\GitForWindows'
+        'HKLM:\SOFTWARE\WOW6432Node\GitForWindows'
+        'HKCU:\SOFTWARE\GitForWindows'
+    )
+    foreach ($regPath in $regPaths) {
+        $installPath = (Get-ItemProperty -Path $regPath -Name InstallPath -ErrorAction SilentlyContinue).InstallPath
+        if ($installPath) {
+            $candidate = Join-Path $installPath 'cmd\git.exe'
+            if (Test-Path $candidate) { $git = $candidate; break }
+        }
+    }
+}
+
+if (-not $git) {
+    $drives = (Get-PSDrive -PSProvider FileSystem).Root
+    $suffixes = @('Program Files\Git\cmd\git.exe', 'Program Files (x86)\Git\cmd\git.exe')
+    $candidates = foreach ($drive in $drives) { foreach ($suffix in $suffixes) { Join-Path $drive $suffix } }
+    $candidates += "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe"
+    $git = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+
+if (-not $git) {
+    throw "git.exe not found on PATH, in the registry, or on any drive's 'Program Files\Git'. Close and reopen your terminal after installing Git (PATH is only re-read on new sessions), or install Git for Windows from https://git-scm.com/download/win."
+}
+
 $githubCli = Get-Command github -ErrorAction SilentlyContinue
 if (-not $githubCli) {
     Write-Warning "GitHub Desktop CLI ('github' command) not found on PATH. Repos will still be cloned, but won't be auto-added to GitHub Desktop - add them manually via File > Add Local Repository."
@@ -41,10 +74,10 @@ foreach ($dep in $deps) {
     if (-not (Test-Path $target)) {
         Write-Host "  Cloning into $target"
         if ($dep.Branch) {
-            git clone --branch $dep.Branch $dep.Url $target
+            & $git clone --branch $dep.Branch $dep.Url $target
         }
         else {
-            git clone $dep.Url $target
+            & $git clone $dep.Url $target
         }
     }
     elseif (Test-Path (Join-Path $target '.git')) {
