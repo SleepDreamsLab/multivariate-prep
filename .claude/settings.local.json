@@ -16,6 +16,11 @@
       "WebFetch(domain:eeglab.org)",
       "Bash(./.venv/Scripts/python -c ' *)",
       "Bash(./.venv/Scripts/python -m py_compile run-pamica.py run-pamica-raw.py)"
+      "PowerShell(& .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\sleach\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\g--Code-multivariate-prep\\\\2e92fb0c-a2a2-4ad6-b452-4e32412ae4cd\\\\scratchpad\\\\bench_real.py\")",
+      "PowerShell(& .\\\\.venv\\\\Scripts\\\\python.exe -m py_compile run-pamica.py; echo \"exit: $LASTEXITCODE\")",
+      "PowerShell(& .\\\\.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\sleach\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\g--Code-multivariate-prep\\\\2e92fb0c-a2a2-4ad6-b452-4e32412ae4cd\\\\scratchpad\\\\diag_pinv.py\")",
+      "PowerShell(nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv)",
+      "PowerShell(nvidia-smi --query-gpu=memory.used,memory.total,memory.free --format=csv)"
     ]
   }
 }
