@@ -189,11 +189,21 @@ for iGroup = 1:nGroups
     LOAD_NOW = EEGstageGroup.pnts * EEGstageGroup.nbchan;
     perWorkerBytes = LOAD_NOW * BYTES_PER_SAMPLE_CH;
 
-    [~, sysMem] = memory;                       % Windows only
-    freeBytes   = sysMem.PhysicalMemory.Available;
+    %%% MATLAB's MEMORY is Windows-only; utils.freemem asks the OS directly on
+    %%% Linux/macOS. It returns NaN when it cannot get a reading, in which case there is
+    %%% no budget to size against and the cluster's own worker count has to stand in.
+    freeBytes = utils.freemem();
 
-    nWorkers = floor(SAFETY * freeBytes / perWorkerBytes);
-    nWorkers = max(1, min(MAX_WORKERS, nWorkers));
+    if isnan(freeBytes)
+        nWorkers = MAX_WORKERS;
+        warning('GEDAI_PerStage:noMemoryReading', ...
+            ['Could not read available RAM on this platform - using the cluster profile''s ' ...
+             '%d worker(s) unchecked (%.1f GB/worker expected).'], ...
+            nWorkers, perWorkerBytes/2^30);
+    else
+        nWorkers = floor(SAFETY * freeBytes / perWorkerBytes);
+        nWorkers = max(1, min(MAX_WORKERS, nWorkers));
+    end
 
     %%% Pool type. GEDAI's band loop broadcasts unfiltered_data to every worker; on a
     %%% process pool that is a full serialized copy each (~7 GB for 4 h of N2 at 256 ch),
