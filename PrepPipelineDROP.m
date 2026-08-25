@@ -24,7 +24,7 @@ targetsrate     = 250;   % down-sample to this srate
 removeDC        = false; % apply 0.1 Hz high-pass filter?
 derivfolder     = 'prep-zc-ged'; % name of output folder within derivatives folder
 scoringpath     = fullfile(BIDS.pth, '..', 'derivatives', 'scores', 'final'); % where to find scoring files
-leadfieldpath   = fullfile('home', 'VS03-SandD-4', 'PM', 'Data_Analysis', 'Brainstorm_db', 'DROP_Leadfields2', 'data'); % where to find leadfield matrices
+leadfieldpath   = fullfile(home, 'VS03-SandD-4', 'PM', 'Data_Analysis', 'Brainstorm_db', 'DROP_Leadfields2', 'data'); % where to find leadfield matrices
 BIDS.description = []; BIDS.description.Name = 'DROP'; % some actions are project specific (e.g., chanlocs import)
 
 % "desc" labels 
