@@ -188,7 +188,6 @@ for ifile = 1:numel(filesEEG)
     D = tic; fprintf('\nEEG import ...\n')
     EEG = fast_eeg_import(eegFile);
     KeepTime = struct('EEGimport', toc(D));
-    logMemStats('after import');
 
     %%% Drop non-EEG channels
     %%% Done here rather than inside run.run_prep so the channel locations below line
@@ -209,7 +208,6 @@ for ifile = 1:numel(filesEEG)
         'removeDC',         opts.removeDC, ...
         'zeropatchseconds', opts.zeropatchseconds, ...
         'KeepTime',         KeepTime);
-    logMemStats('after run_prep');
 
     %%% Bad channels: load only. Detection is bidsfun_detect_badchans' job; this stage
     %%% never redetects, so a stale or missing mask surfaces immediately rather than
@@ -246,12 +244,10 @@ for ifile = 1:numel(filesEEG)
         EEG.etc.filterparams.BadChannels = struct( ...
             'maskFile', badchanFile, 'nRemoved', nnz(removedMask));
     end
-    logMemStats('after badchan removal');
 
     %%% Zapline
     if opts.zapline
         D = tic; fprintf('\nZapline plus ...\n')
-        logMemStats('before Zapline call');
         %%% Transpose to [nSamples x nChannels] here rather than letting
         %%% clean_data_with_zapline_plus transpose it internally. MATLAB cannot release
         %%% this EEG.data field's pre-call value until the assignment below completes,
@@ -417,24 +413,5 @@ if ~isempty(failures)
     fid = fopen(fullfile(opts.savepath, 'failed_files_zapline.json'), 'w');
     fprintf(fid, '%s', jsonencode([failures{:}], 'PrettyPrint', true));
     fclose(fid);
-end
-end
-
-function logMemStats(label)
-%%% Diagnostic only, temporary: separates "how much MATLAB thinks is live"
-%%% (would show up in the profiler's Allocated/Peak Memory columns) from "the
-%%% largest contiguous block MATLAB could actually hand out right now". If the
-%%% latter is far below what physical RAM still has free, that's fragmentation
-%%% from the sequence of full-recording-sized arrays created and discarded
-%%% earlier in this same call (import/resample/DC-removal/pop_select), not a
-%%% single allocation that is genuinely too large. ispc-guarded because
-%%% MEMORY() is Windows-only.
-if ~ispc, return; end
-try
-    [u, s] = memory;
-    fprintf('[memory] %-28s MATLAB used: %6.1f GB | largest contiguous: %6.1f GB | physical free: %6.1f / %6.1f GB\n', ...
-        label, u.MemUsedMATLAB/2^30, u.MemAvailableAllArrays/2^30, ...
-        s.PhysicalMemory.Available/2^30, s.PhysicalMemory.Total/2^30);
-catch
 end
 end
