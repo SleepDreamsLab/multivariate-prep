@@ -29,9 +29,20 @@ DERIV_IN_DIR  = "prep-zc-ged"  # derivatives subfolder to read the desc-* .set f
 DERIV_OUT_DIR = "prep-zc-ged"    # derivatives subfolder to write AMICA output under
 DESC          = "hpzcged" # zc
 OUT_DESC      = "pamica"# True # "zc2gedWakeBBAutoPlusFSAutoPlus2AmicaF32DllAutoStride4Rej0Nmodel1"  # desc entity for the AMICA output filename; None = same as DESC (the input's own desc)
-SUBJECTS      = ["drop0001"] # ["drop0001"]  # None = all subjects
-SESSIONS      = ["t1"]  # None # ["t1"]  # None = all sessions
+SUBJECTS      = None # ["drop0001"]  # None = all subjects
+SESSIONS      = None  # None # ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
+
+DATA_EXTENSIONS = (".set", ".vhdr")  # preference order when both exist for a recording
+
+# Input files can still be getting written by another machine as this script starts.
+# The __main__ loop scans all requested recordings each pass, processing whichever
+# already exist immediately and deferring the rest -- a missing file never blocks
+# checking the next one. Once a full pass leaves recordings still missing, it waits
+# WAIT_LOOP_MINUTES before rescanning just those. If no scan pass turns up a new
+# file for WAIT_MAX_MINUTES straight, it gives up and raises for whatever's left.
+WAIT_MAX_MINUTES = 180  # give up if no new file appears across scans for this long
+WAIT_LOOP_MINUTES = 5   # how long to wait between rescans of the still-missing set
 
 
 MAX_ITER = 600  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
@@ -86,23 +97,20 @@ def load_bids(mat_path):
     mat = sio.loadmat(mat_path, simplify_cells=True)
     return _unwrap(mat[next(k for k in mat if not k.startswith("__"))])
 
+def deriv_entries(bids, desc, deriv_in):
+    """Build (base, candidates) pairs for every raw .vhdr recording in the BIDS
+    struct that matches the SUBJECTS/SESSIONS/TASKS filters, mapped onto its
+    prep-ged derivative file -- WITHOUT checking whether that file actually
+    exists yet (see the scan/retry loop in __main__ for that).
 
-DATA_EXTENSIONS = (".set", ".vhdr")  # preference order when both exist for a recording
-
-
-def deriv_paths(bids, desc, deriv_in):
-    """Map each raw .vhdr recording in the BIDS struct onto its prep-ged derivative file.
     Mirrors the MATLAB filtering (bids.query(..., 'extension', '.vhdr')) then
     bids.internal.parse_filename entity join, using the ext/entities fields
     that BIDS_DROP.mat already carries per recording instead of re-deriving
-    them from the filename.
-
-    The derivative can be either an EEGLAB .set or a BrainVision .vhdr file;
-    both extensions are tried per recording (in DATA_EXTENSIONS order), and
-    run_amica() picks the matching MNE reader off the extension it gets back.
+    them from the filename. The derivative can be either an EEGLAB .set or a
+    BrainVision .vhdr file; both extensions are tried per recording (in
+    DATA_EXTENSIONS order).
     """
-    paths = []
-    missing = []
+    entries = []
     for sub in np.atleast_1d(bids["subjects"]):
         for rec in np.atleast_1d(sub["eeg"]):
             if rec["ext"] != ".vhdr":
@@ -118,17 +126,27 @@ def deriv_paths(bids, desc, deriv_in):
             folders = [f"sub-{ent['sub']}"] + ([f"ses-{ent['ses']}"] if "ses" in ent else [])
             base = deriv_in.joinpath(*folders, f"{file_id}_desc-{desc}_eeg")
             candidates = [base.with_suffix(ext) for ext in DATA_EXTENSIONS]
-            found = [c for c in candidates if c.is_file()]
-            if not found:
-                missing.append(base)
-                continue
-            if len(found) > 1:
-                print(f"both {' and '.join(c.suffix for c in found)} present for {base.name}, using {found[0].suffix}")
-            paths.append(found[0])
+            entries.append((base, candidates))
+    return entries
 
-    for base in missing:
-        print(f"missing: {base} ({'/'.join(DATA_EXTENSIONS)})")
-    return paths
+
+def _scan_pass(entries):
+    """One pass over `entries` (list of (base, candidates)): returns (found,
+    still_missing) -- found is the list of resolved Paths (existing now),
+    still_missing is the (base, candidates) entries that don't exist yet, to
+    retry on a later pass. A missing entry never blocks checking the next one.
+    """
+    found = []
+    still_missing = []
+    for base, candidates in entries:
+        hits = [c for c in candidates if c.is_file()]
+        if not hits:
+            still_missing.append((base, candidates))
+            continue
+        if len(hits) > 1:
+            print(f"both {' and '.join(c.suffix for c in hits)} present for {base.name}, using {hits[0].suffix}")
+        found.append(hits[0])
+    return found, still_missing
 
 
 def _fmt_small(x):
@@ -375,7 +393,30 @@ if __name__ == "__main__":
     deriv_in = rawdata / "derivatives" / DERIV_IN_DIR
     deriv_out = rawdata / "derivatives" / DERIV_OUT_DIR
 
-    for data_file in deriv_paths(bids, DESC, deriv_in):
-        final_ll = run_amica(data_file, deriv_out)
-        if final_ll is not None:
-            print(f"{data_file.stem}: final LL = {final_ll:.5f}")
+    # Scan/retry loop for input files another machine may still be writing: each
+    # pass checks every still-missing recording once (a miss never blocks checking
+    # the next), processes whatever's newly found immediately, then waits
+    # WAIT_LOOP_MINUTES before rescanning the remainder. Gives up (raises) once
+    # WAIT_MAX_MINUTES pass with no scan turning up anything new.
+    pending = deriv_entries(bids, DESC, deriv_in)
+    last_progress = time.monotonic()
+    while pending:
+        found, pending = _scan_pass(pending)
+        if found:
+            last_progress = time.monotonic()
+            for data_file in found:
+                final_ll = run_amica(data_file, deriv_out)
+                if final_ll is not None:
+                    print(f"{data_file.stem}: final LL = {final_ll:.5f}")
+        if not pending:
+            break
+        stalled_for = time.monotonic() - last_progress
+        if stalled_for >= WAIT_MAX_MINUTES * 60:
+            names = ", ".join(base.name for base, _ in pending)
+            raise FileNotFoundError(
+                f"giving up after {WAIT_MAX_MINUTES} min with no new input files -- "
+                f"still missing: {names}"
+            )
+        print(f"  {len(pending)} file(s) still missing, rechecking in {WAIT_LOOP_MINUTES} min "
+              f"(giving up after {WAIT_MAX_MINUTES} min total without progress)")
+        time.sleep(WAIT_LOOP_MINUTES * 60)
