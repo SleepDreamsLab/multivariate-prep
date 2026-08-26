@@ -12,6 +12,7 @@ python run-pamica.py
 
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 import mne
@@ -24,10 +25,10 @@ from scipy.signal import cheb2ord, cheby2, sosfiltfilt
 # time.sleep(1 * 30 * 60)
 
 BIDS_MAT      = Path(__file__).parent / "BidsFiles" / "BIDS_DROP.mat"
-DERIV_IN_DIR  = "prep-ged"  # derivatives subfolder to read the desc-* .set files from
-DERIV_OUT_DIR = "pamica"    # derivatives subfolder to write AMICA output under
-DESC          = "zc2gedWakeBBAutoPlusFSAutoPlus" # zc
-OUT_DESC      = "noHP"# True # "zc2gedWakeBBAutoPlusFSAutoPlus2AmicaF32DllAutoStride4Rej0Nmodel1"  # desc entity for the AMICA output filename; None = same as DESC (the input's own desc)
+DERIV_IN_DIR  = "prep-zc-ged"  # derivatives subfolder to read the desc-* .set files from
+DERIV_OUT_DIR = "prep-zc-ged"    # derivatives subfolder to write AMICA output under
+DESC          = "hpzcged" # zc
+OUT_DESC      = "pamica"# True # "zc2gedWakeBBAutoPlusFSAutoPlus2AmicaF32DllAutoStride4Rej0Nmodel1"  # desc entity for the AMICA output filename; None = same as DESC (the input's own desc)
 SUBJECTS      = ["drop0001"] # ["drop0001"]  # None = all subjects
 SESSIONS      = ["t1"]  # None # ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
@@ -158,7 +159,7 @@ def output_paths(data_file, deriv_out, out_desc, stride=None):
     a string = use it literally.
 
     Returns (mat_path, bin_dir, json_path): the .mat file, the same-named folder for
-    write_amica_output()'s binaries (no extension), and a same-named runtime json.
+    write_amica_output()'s binaries (no extension), and a same-named json.
     """
     stem = data_file.stem
     if not stem.endswith("_eeg"):
@@ -181,7 +182,7 @@ def output_paths(data_file, deriv_out, out_desc, stride=None):
     return (
         session_dir / f"{mat_stem}.mat",
         session_dir / mat_stem,
-        session_dir / f"{mat_stem}_runtime.json",
+        session_dir / f"{mat_stem}.json",
     )
 
 
@@ -335,29 +336,32 @@ def run_amica(data_file, deriv_out):
     with open(json_path, "w") as f:
         json.dump(
             {
-                "elapsed_seconds": elapsed,
-                "max_iter": MAX_ITER,
-                "do_reject": DO_REJECT,
-                "do_newton": DO_NEWTON,
-                "pass_frq": PASS_FRQ,
-                "stop_frq": STOP_FRQ,
-                "pass_ripple": PASS_RIPPLE,
-                "stop_atten": STOP_ATTEN,
-                "rank_tol": RANK_TOL,
-                "n_models": N_MODELS,
-                "n_mix": N_MIX,
-                "block_size": BLOCK_SIZE,
-                "dtype": str(DTYPE),
-                "device": DEVICE,
-                "min_samples_factor": MIN_SAMPLES_FACTOR,
-                "max_stride": MAX_STRIDE,
-                "stride": stride,
-                "n_samples": Xr.shape[1],
-                "min_dll": MIN_DLL,
-                "maxincs": MAXINCS,
-                "use_min_dll": USE_MIN_DLL,
-                "use_grad_norm": USE_GRAD_NORM,
-                "min_nd": MIN_ND,
+                "PamicaParameters": {
+                    "max_iter": MAX_ITER,
+                    "do_reject": DO_REJECT,
+                    "do_newton": DO_NEWTON,
+                    "pass_frq": PASS_FRQ,
+                    "stop_frq": STOP_FRQ,
+                    "pass_ripple": PASS_RIPPLE,
+                    "stop_atten": STOP_ATTEN,
+                    "rank_tol": RANK_TOL,
+                    "n_models": N_MODELS,
+                    "n_mix": N_MIX,
+                    "block_size": BLOCK_SIZE,
+                    "dtype": str(DTYPE),
+                    "device": DEVICE,
+                    "min_samples_factor": MIN_SAMPLES_FACTOR,
+                    "max_stride": MAX_STRIDE,
+                    "stride": stride,
+                    "n_samples": Xr.shape[1],
+                    "min_dll": MIN_DLL,
+                    "maxincs": MAXINCS,
+                    "use_min_dll": USE_MIN_DLL,
+                    "use_grad_norm": USE_GRAD_NORM,
+                    "min_nd": MIN_ND,
+                },
+                "ProcessingDurationsMinutes": elapsed / 60,
+                "GeneratedDate": datetime.now().isoformat(),
             },
             f,
             indent=2,
