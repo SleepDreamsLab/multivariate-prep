@@ -102,7 +102,7 @@ end
 src = struct('name', {}, 'data', {}, 'rowOf', {}, 'hasICA', {}, 'unmix', {}, ...
              'winv', {}, 'icachansind', {}, 'posInICA', {}, 'nComp', {}, ...
              'icTick', {}, 'icText', {}, 'icClass', {}, 'classNames', {}, ...
-             'subIdx', {}, 'subP', {});
+             'subIdx', {}, 'subP', {}, 'icaChanlocs', {});
 for k = 1:nSrc
     E = srcEEG{k};
     src(k).name  = srcName{k};
@@ -318,7 +318,7 @@ navW     = [1.15 1.15 0.75 0.55 1.15 0.55];   % Prev  Next  "Epoch:" []  "Window
 stageW   = [1.30 0.80 0.80];                  % [stage]  First  Next
 dispW    = [1.25 0.60 0.60 1.20];             % [time unit]  Amp-  Amp+  Channels...
 traceW   = [1.00 1.30];                       % Diff  Clean only
-icaW     = [1.15 1.30];                       % Show ICs  Subtract ICs
+icaW     = [1.15 1.30 1.15];                 % Show ICs  Subtract ICs  IC Topos
 groupW   = cellfun(@(w) sum(w) + slotGap*(numel(w)-1), {navW, stageW, dispW, traceW, icaW});
 
 panGap = 0.008; panX0 = 0.02;
@@ -387,6 +387,8 @@ btnICView = uicontrol(p, 'Style', 'togglebutton', 'String', 'Show ICs (i)', 'Uni
 btnSubtract = uicontrol(p, 'Style', 'togglebutton', 'String', 'Subtract ICs', 'Units', 'normalized', ...
     'Position', [s(2,1) yB s(2,2) hB], 'Enable', icaEnable, 'Callback', @(o,e) toggleSubtract());
 
+uicontrol(p, 'Style', 'pushbutton', 'String', 'IC Topos', 'Units', 'normalized', ...
+    'Position', [s(3,1) yB s(3,2) hB], 'Enable', icaEnable, 'Callback', @(o,e) openTopoPlot());
 %%% --- Hypnogram strip (static, drawn once -- never touched in redraw) ---
 % Shares panelX/panelW with the EEG panel and the scrollbar, so all three
 % line up horizontally.
@@ -585,6 +587,31 @@ applyRowSelection();   % builds ticks/ylim/zero-lines and redraws
             src(kSub).subP = src(kSub).winv(:, sel) * src(kSub).unmix(sel, :);
             confirmed = true;
         end
+    end
+
+    function openTopoPlot()
+        % Same component picker as "Subtract ICs", but the confirm button
+        % plots instead of subtracting. Preselects whatever is currently on
+        % screen in IC view (the top 10 by default) rather than the
+        % subtraction set, which on a 256-channel decomposition is routinely
+        % 40+ components and would produce an unreadable wall of tiles.
+        if isempty(icaPrimary), return; end
+        tCb = tic;
+        pIC = icaPrimary;
+        [sel, ok] = viewer.pickerDialog(src(pIC).icText, selICIdx, ...
+            sprintf('IC topographies - %s', src(pIC).name), ...
+            'Components to plot as topographies:', ...
+            'Plot Topos', src(pIC).classNames, src(pIC).icClass);
+        if ~ok || isempty(sel), return; end
+        try
+            viewer.plotICTopos(src(pIC).winv, src(pIC).icaChanlocs, sel, ...
+                src(pIC).icTick, sprintf('IC topographies - %s', src(pIC).name));
+        catch ME
+            % A missing topoplot or an unplaceable montage should not take
+            % the viewer down with it.
+            warning('eegCompareViewer:topoFailed', '%s', ME.message);
+        end
+        fprintf('[openTopoPlot] TOTAL %6.1f ms\n\n', toc(tCb)*1000);
     end
 
     function openRowSelector()
@@ -919,6 +946,7 @@ end
 
 s.unmix       = single(EEG.icaweights * EEG.icasphere);   % nComp x nICAchan
 s.icachansind = icachansind;
+s.icaChanlocs = EEG.chanlocs(icachansind);   % kept for the IC topographies
 s.nComp       = size(s.unmix, 1);
 if isfield(EEG, 'icawinv') && ~isempty(EEG.icawinv)
     s.winv = single(EEG.icawinv);                         % nICAchan x nComp

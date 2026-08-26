@@ -64,7 +64,15 @@ file = fname1;
 file2 = [fname1 ' + ICA'];
 
 % Add EOG, interpolate missing channels
-[EEG, chanmap] = chans1020(EEG, false, 'add_eog', true, 'net', net, 'chanprefix', 'E');
+chanOpts       = {false, 'add_eog', true, 'net', net, 'chanprefix', 'E'};
+EEGpreChans    = EEG;                       % keep the pre-chans1020 channel set/labels
+[EEG, chanmap] = chans1020(EEG, chanOpts{:});
+
+% EOG1/EOG2 are bipolar derivations that chans1020 appends AFTER the ICA was
+% built, so they sit outside icachansind and IC subtraction would leave them
+% untouched -- eye components would stay fully visible in exactly the two
+% traces you use to judge them. Extend the mixing matrix to cover them.
+EEG = viewer.extendICAToDerived(EEG, EEGpreChans, chanOpts, [chanmap.EOG1, chanmap.EOG2]);
 
 % View dataa
 viewer.eegCompareViewer(EEG, [], scoringDigits, file, file2, plotDecimation, fieldnames(chanmap));
