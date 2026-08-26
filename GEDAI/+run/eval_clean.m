@@ -75,7 +75,10 @@ end
 %%% were dropped from the cleaned data upstream, and every plot function here compares
 %%% the two through a single channel index or a single chanlocs, so they have to share a
 %%% montage. Only call pop_interp when something is actually missing - it returns early
-%%% otherwise, but the call still drags eeg_checkset behind it.
+%%% otherwise, but the call still drags eeg_checkset behind it. On a full night this is
+%%% the single most memory-hungry step of the evaluation, so patches/eeg_interp.m
+%%% replaces EEGLAB's spherical interpolation with a chunked, class-preserving version
+%%% (same output, ~4x less peak RAM) - keep 'patches' ahead of EEGLAB on the path.
 if isfield(EEGraw, 'urchanlocs') && ~isempty(EEGraw.urchanlocs)
     urchanlocs = EEGraw.urchanlocs;
     if numel(EEGraw.chanlocs) < numel(urchanlocs)
