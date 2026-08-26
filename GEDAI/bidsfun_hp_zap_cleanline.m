@@ -369,20 +369,11 @@ for ifile = 1:numel(filesEEG)
     prepParams = struct();
     if isfield(EEG.etc, 'filterparams'), prepParams = EEG.etc.filterparams; end
 
-    %%% Everything about bad channels goes to the badchans sidecar rather than this one,
-    %%% so which mask was applied is described in its own file. This stage's JSON is
-    %%% about filtering.
-    bcParams = struct();
-    if isfield(prepParams, 'BadChannels')
-        bcParams   = prepParams.BadChannels;
-        prepParams = rmfield(prepParams, 'BadChannels');
-    end
-
-    if opts.badchannels
-        bcParams.firstRoundDesc = opts.badchandesc;
-        sidecarjson(struct(), ...
-            fullfile(outDir, [fileID '_desc-' opts.desc '_badchans.json']), ...
-            struct('BadChannelParameters', bcParams));
+    %%% Bad-channel info (maskFile, nRemoved) stays inside prepParams.BadChannels below
+    %%% rather than a separate sidecar: bidsfun_detect_badchans already owns the
+    %%% badchans.json/figures for that stage, and this stage doesn't need its own.
+    if opts.badchannels && isfield(prepParams, 'BadChannels')
+        prepParams.BadChannels.firstRoundDesc = opts.badchandesc;
     end
 
     prepParams.targetSampleRate = opts.targetsrate;
