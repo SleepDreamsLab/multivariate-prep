@@ -41,6 +41,10 @@ SUBJECTS      = None # ["drop0001"]  # None = all subjects
 SESSIONS      = None  # None # ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
 
+REFRESH_PAMICA = True  # True = refit and overwrite even if <mat_stem>.mat already exists
+                        # (both skip-checks in run_amica() respect this)
+REFRESH_ICLABEL = True  # True = relabel and overwrite even if <stem>_iclabels.tsv already exists
+
 DATA_EXTENSIONS = (".set", ".vhdr")  # preference order when both exist for a recording
 
 # Input files can still be getting written by another machine as this script starts.
@@ -114,10 +118,9 @@ ICLABEL_MINUTES = 0
 ICLABEL_CHUNK_SECONDS = 60
 
 # Marking components bad: top class among these, at or above this probability.
-# Indices are into ICLABEL_CLASSES below (0-based), i.e. everything except brain and
-# "other" -- the same set ICA/bidsfun_iclabel.m defaults to.
-ICLABEL_ARTEFACT_CLASSES = (1, 2, 3, 4, 5)
-ICLABEL_THRESHOLD = 0.5
+# Indices are into ICLABEL_CLASSES below (0-based), i.e. everything except brain
+ICLABEL_ARTEFACT_CLASSES = (1, 2, 3, 4, 5, 6)
+ICLABEL_THRESHOLD = 0.0
 
 # GEDAI average-references before it runs, so the derivative this reads already is
 # common-average even though nothing in the file says so. Declaring it keeps
@@ -303,9 +306,11 @@ def run_amica(data_file, deriv_out):
     # and the stride is only known after preprocessing. That case still falls through.
     if OUT_DESC is not True:
         mat_path, _, _ = output_paths(data_file, deriv_out, OUT_DESC)
-        if mat_path.is_file():
+        if mat_path.is_file() and not REFRESH_PAMICA:
             print(f"skip {data_file.stem} (already done: {mat_path.name})")
             return None, mat_path
+        if mat_path.is_file():
+            print(f"  REFRESH_PAMICA: refitting and overwriting {mat_path.name}")
 
     raw = read_raw(data_file)
     picks = mne.pick_types(raw.info, eeg=True, exclude="bads")
@@ -317,7 +322,7 @@ def run_amica(data_file, deriv_out):
     del raw
 
     print(f"{data_file.stem}: {len(labels)} channels")
-    # X = highpass(X, sfreq)
+    X = highpass(X, sfreq)
     # X -= X.mean(axis=1, keepdims=True)
     P = rank_projection(X)  # kept in float64: cheap, and wants a clean rank cut
     Xr = (P @ X).astype(np.float32)
@@ -339,9 +344,11 @@ def run_amica(data_file, deriv_out):
     # is only known post-decimation -- so the "already done" check has to live
     # here too, after preprocessing, rather than before it like a plain-desc run.
     mat_path, bin_dir, json_path = output_paths(data_file, deriv_out, OUT_DESC, stride)
-    if mat_path.is_file():
+    if mat_path.is_file() and not REFRESH_PAMICA:
         print(f"skip {data_file.stem} (already done: {mat_path.name})")
         return None, mat_path
+    if mat_path.is_file():
+        print(f"  REFRESH_PAMICA: refitting and overwriting {mat_path.name}")
 
     model = AMICA(n_models=N_MODELS, n_mix=N_MIX, device=DEVICE)
     t0 = time.perf_counter()
@@ -566,8 +573,10 @@ def run_iclabel(mat_path):
 
     mat = sio.loadmat(mat_path, simplify_cells=True)
     if "ic_classification" in mat and tsv_path.is_file():
-        print(f"  ICLabel: already labelled ({tsv_path.name})")
-        return None
+        if not REFRESH_ICLABEL:
+            print(f"  ICLabel: already labelled ({tsv_path.name})")
+            return None
+        print(f"  REFRESH_ICLABEL: relabelling and overwriting {tsv_path.name}")
 
     ch_names = [str(c) for c in np.atleast_1d(mat["chanlabels"])]
     data_file = Path(str(mat["setfile"]))
