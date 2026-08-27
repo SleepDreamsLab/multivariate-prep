@@ -4,7 +4,15 @@ AMICA (pamica) on BIDS derivative recordings, either EEGLAB .set or BrainVision
 
 Per recording: import -> Chebyshev-II high-pass -> rank projection (GEDAI may
 have left the data rank deficient) -> AMICA -> unmixing matrices written in the
-form EEGLAB expects in EEG.icaweights / EEG.icasphere / EEG.icawinv.
+form EEGLAB expects in EEG.icaweights / EEG.icasphere / EEG.icawinv -> optionally
+ICLabel (mne-icalabel) over those components.
+
+The ICLabel pass is deliberately independent of the AMICA fit: it keys off the
+_ica.mat, so a recording whose .mat already exists gets labelled without refitting.
+That matters because a fit is hours on a GPU and a relabel is a minute -- see
+run_iclabel() and RUN_ICLABEL below. The MATLAB equivalent, ICA/bidsfun_iclabel.m,
+writes the same _iclabels.tsv schema from the canonical EEGLAB implementation; use
+either, not both, per recording.
 
 .venv\Scripts\Activate.ps1
 python run-pamica.py
@@ -33,6 +41,10 @@ SUBJECTS      = None # ["drop0001"]  # None = all subjects
 SESSIONS      = None  # None # ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
 
+REFRESH_PAMICA = True  # True = refit and overwrite even if <mat_stem>.mat already exists
+                        # (both skip-checks in run_amica() respect this)
+REFRESH_ICLABEL = True  # True = relabel and overwrite even if <stem>_iclabels.tsv already exists
+
 DATA_EXTENSIONS = (".set", ".vhdr")  # preference order when both exist for a recording
 
 # Input files can still be getting written by another machine as this script starts.
@@ -45,7 +57,7 @@ WAIT_MAX_MINUTES = 180  # give up if no new file appears across scans for this l
 WAIT_LOOP_MINUTES = 5   # how long to wait between rescans of the still-missing set
 
 
-MAX_ITER = 600  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
+MAX_ITER = 700  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
 DO_REJECT = False  # Fortran-style outlier rejection; costs ~2x GPU memory (pamica clones the full array
                    # every iteration under do_reject, core.py:1710) -- OOMs on this recording size/GPU
 DO_NEWTON = True   # Fortran-parity Newton preconditioner (tune newt_start/newtrate via fit() kwargs)
@@ -83,6 +95,46 @@ MIN_ND = 1e-7          # RMS weight-update-norm threshold for the above
 # the full recording instead of just its first portion.
 MIN_SAMPLES_FACTOR = 30  # target sample count = k^2 * this
 MAX_STRIDE = 4            # largest allowed stride; never take every 5th sample or coarser
+
+
+# ICLabel (mne-icalabel), run over the components AMICA just fitted -- or over the
+# ones an earlier run already wrote, since this keys off the _ica.mat rather than the
+# fit. Writes <mat_stem>_iclabels.tsv (+ .json data dictionary) beside the .mat and
+# folds the probability matrix back into the .mat itself.
+RUN_ICLABEL = True
+ICLABEL_BACKEND = None   # None = mne-icalabel picks: torch if installed, else onnx
+
+# ICLabel sees this many minutes, as evenly spaced chunks rather than the head of the
+# recording, so every sleep stage contributes in roughly the proportion it occupies.
+# 0 = hand over the whole recording (the default here).
+#
+# Mind the memory if raising this above 0: _eeg_autocorr_welch stacks the activations
+# through a 50%-overlapping 3-s window index in float64, so it transiently needs well
+# over an order of magnitude more than the recording itself -- a 236-component 8-h
+# night at 250 Hz needs on the order of 40 GB there. Set this to e.g. 60 if that OOMs
+# on your machine; both data-derived features (median 1-s PSD, mean 3-s
+# autocorrelation) are window averages and converge well inside an hour.
+ICLABEL_MINUTES = 0
+ICLABEL_CHUNK_SECONDS = 60
+
+# Marking components bad: top class among these, at or above this probability.
+# Indices are into ICLABEL_CLASSES below (0-based), i.e. everything except brain
+ICLABEL_ARTEFACT_CLASSES = (1, 2, 3, 4, 5, 6)
+ICLABEL_THRESHOLD = 0.0
+
+# GEDAI average-references before it runs, so the derivative this reads already is
+# common-average even though nothing in the file says so. Declaring it keeps
+# mne-icalabel from warning once per recording about a reference that is in fact
+# correct. Set False if you ever feed this something that is NOT average referenced.
+ICLABEL_ASSUME_AVGREF = True
+
+# mne-icalabel reports 'muscle artifact' / 'eye blink' / 'heart beat'; the MATLAB
+# original reports 'Muscle' / 'Eye' / 'Heart'. The network and the column order are
+# the same, so the labels are renamed to the MATLAB spelling and the .tsv written
+# here is interchangeable with bidsfun_iclabel.m's.
+ICLABEL_CLASSES = ("Brain", "Muscle", "Eye", "Heart", "Line Noise", "Channel Noise", "Other")
+ICLABEL_COLUMNS = ("p_brain", "p_muscle", "p_eye", "p_heart",
+                   "p_line_noise", "p_channel_noise", "p_other")
 
 
 def _unwrap(x):
@@ -229,16 +281,37 @@ def rank_projection(X, tol=RANK_TOL):
     return V[:, :k].T
 
 
-def read_raw(data_file):
-    """Load a derivative recording with the MNE reader matching its extension."""
+def read_raw(data_file, preload=True):
+    """Load a derivative recording with the MNE reader matching its extension.
+
+    preload=False is what the ICLabel path uses: it only ever wants a handful of
+    chunks, and preloading a full night to throw most of it away is the one thing
+    that makes that step expensive.
+    """
     if data_file.suffix == ".set":
-        return mne.io.read_raw_eeglab(data_file, preload=True)
+        return mne.io.read_raw_eeglab(data_file, preload=preload)
     if data_file.suffix == ".vhdr":
-        return mne.io.read_raw_brainvision(data_file, preload=True)
+        return mne.io.read_raw_brainvision(data_file, preload=preload)
     raise ValueError(f"unsupported derivative extension: {data_file.suffix} ({data_file})")
 
 
 def run_amica(data_file, deriv_out):
+    # Early out. With a literal OUT_DESC the output name is fully determined by the
+    # input name, so an already-fitted night costs one stat() here instead of a full
+    # preload plus an nchan x nchan eigendecomposition before the late check below --
+    # which matters now that the point of revisiting a finished night is usually just
+    # to give it the ICLabel pass it never got.
+    #
+    # OUT_DESC=True cannot use this: it encodes the decimation stride in the filename,
+    # and the stride is only known after preprocessing. That case still falls through.
+    if OUT_DESC is not True:
+        mat_path, _, _ = output_paths(data_file, deriv_out, OUT_DESC)
+        if mat_path.is_file() and not REFRESH_PAMICA:
+            print(f"skip {data_file.stem} (already done: {mat_path.name})")
+            return None, mat_path
+        if mat_path.is_file():
+            print(f"  REFRESH_PAMICA: refitting and overwriting {mat_path.name}")
+
     raw = read_raw(data_file)
     picks = mne.pick_types(raw.info, eeg=True, exclude="bads")
     if raw.info["bads"]:
@@ -249,7 +322,7 @@ def run_amica(data_file, deriv_out):
     del raw
 
     print(f"{data_file.stem}: {len(labels)} channels")
-    # X = highpass(X, sfreq)
+    X = highpass(X, sfreq)
     # X -= X.mean(axis=1, keepdims=True)
     P = rank_projection(X)  # kept in float64: cheap, and wants a clean rank cut
     Xr = (P @ X).astype(np.float32)
@@ -271,9 +344,11 @@ def run_amica(data_file, deriv_out):
     # is only known post-decimation -- so the "already done" check has to live
     # here too, after preprocessing, rather than before it like a plain-desc run.
     mat_path, bin_dir, json_path = output_paths(data_file, deriv_out, OUT_DESC, stride)
-    if mat_path.is_file():
+    if mat_path.is_file() and not REFRESH_PAMICA:
         print(f"skip {data_file.stem} (already done: {mat_path.name})")
-        return None
+        return None, mat_path
+    if mat_path.is_file():
+        print(f"  REFRESH_PAMICA: refitting and overwriting {mat_path.name}")
 
     model = AMICA(n_models=N_MODELS, n_mix=N_MIX, device=DEVICE)
     t0 = time.perf_counter()
@@ -384,7 +459,234 @@ def run_amica(data_file, deriv_out):
             f,
             indent=2,
         )
-    return model.final_ll_
+    return model.final_ll_, mat_path
+
+
+def _eeglab_style_ica(icaweights, icasphere, info):
+    """Wrap an externally computed unmixing (icaweights @ icasphere) in an mne ICA.
+
+    Mirrors mne.preprocessing.read_ica_eeglab, which is MNE's own supported route for
+    bringing an EEGLAB-shaped decomposition in -- the same route mne-icalabel's docs
+    point at. The only difference is the source: the matrices come from memory here
+    instead of out of a .set file.
+
+    Why the SVD. mne-icalabel reads the decomposition back as
+    unmixing_matrix_ @ pca_components_, so those two have to multiply out to the full
+    channel-space unmixing. AMICA's icaweights (ncomp x k) and icasphere (k x nchan)
+    do not fit those slots directly when k < nchan -- the rank projection makes
+    icaweights non-square in the wrong way -- so the product is re-split by SVD into
+    a square (u*s) and an orthonormal v, which do.
+    """
+    from mne.preprocessing import ICA
+
+    n_components = icaweights.shape[0]
+    unmixing = icaweights @ icasphere                      # ncomp x nchan
+    u, s, v = np.linalg.svd(unmixing, full_matrices=False)
+
+    ica = ICA(method="imported_eeglab", n_components=n_components)
+    ica.current_fit = "eeglab"
+    ica.ch_names = info["ch_names"]
+    ica.n_pca_components = None
+    ica.n_components_ = n_components
+    ica.pre_whitener_ = np.ones((len(info["ch_names"]), 1))
+    ica.pca_mean_ = np.zeros(len(info["ch_names"]))
+    ica.unmixing_matrix_ = u * s
+    ica.pca_components_ = v
+    ica.pca_explained_variance_ = s * s
+    ica.info = info
+    ica._update_mixing_matrix()
+    ica._update_ica_names()
+    ica.reject_ = None
+
+    # What mne-icalabel will actually reconstruct and apply to the data
+    # (features._retrieve_eeglab_icawinv), recomputed here from public attributes.
+    # If the split above were wrong, the components would still get labels -- just
+    # labels for the wrong sources -- so this has to be an error, not a warning.
+    roundtrip = ica.unmixing_matrix_ @ ica.pca_components_[:n_components, :]
+    err = np.abs(roundtrip - unmixing).max() / np.abs(unmixing).max()
+    if err > 1e-6:
+        raise RuntimeError(
+            f"ICA round-trip mismatch ({err:.2e}): unmixing_matrix_ @ pca_components_ "
+            f"does not reproduce icaweights @ icasphere."
+        )
+    return ica
+
+
+def iclabel_subset(data_file, ch_names, minutes, chunk_seconds):
+    """Load `minutes` of `data_file` as evenly spaced chunks, as an mne Raw.
+
+    Returns (raw, minutes_used). minutes <= 0, or a recording shorter than that,
+    loads everything. Channels are picked by name, in the order the decomposition
+    was fitted with, so raw.ch_names lines up with the columns of icasphere.
+    """
+    import mne
+    from mne.io import RawArray
+
+    raw = read_raw(data_file, preload=False)
+    picks = mne.pick_channels(raw.ch_names, include=list(ch_names), ordered=True)
+    info = mne.pick_info(raw.info, picks)
+    sfreq = raw.info["sfreq"]
+    n_total = raw.n_times
+
+    n_want = int(round(minutes * 60 * sfreq))
+    if minutes <= 0 or n_want >= n_total:
+        data = raw.get_data(picks=picks)
+    else:
+        chunk = min(int(round(chunk_seconds * sfreq)), n_total)
+        n_chunk = max(1, n_want // chunk)
+        starts = np.unique(np.linspace(0, n_total - chunk, n_chunk).round().astype(int))
+        data = np.hstack([raw.get_data(picks=picks, start=s, stop=s + chunk) for s in starts])
+    del raw
+
+    if ICLABEL_ASSUME_AVGREF:
+        with info._unlock():
+            info["custom_ref_applied"] = True
+    out = RawArray(data, info, verbose="ERROR")
+    return out, out.n_times / sfreq / 60
+
+
+def run_iclabel(mat_path):
+    """Label the components in `mat_path` with ICLabel and write the results beside it.
+
+    Reads the decomposition back out of the .mat rather than taking it from the fit,
+    so this works the same whether AMICA just ran or ran last week.
+
+    Writes three things:
+      <stem>_iclabels.tsv   BIDS table, one row per component (the file to read or
+                            hand-edit when deciding what to subtract)
+      <stem>_iclabels.json  its data dictionary, plus which implementation ran
+      <stem>_ica.mat        updated in place with 'ic_classification' (EEGLAB's own
+                            nested shape), 'gcompreject' and 'varfrac', so MATLAB can
+                            pick the whole decomposition up with ICA/loadica.m
+
+    Returns the (n_components, 7) probability matrix, or None if the labels were
+    already there.
+    """
+    from mne_icalabel.iclabel import iclabel_label_components
+
+    # <fileID>_desc-X_ica.mat -> <fileID>_desc-X_iclabels.tsv, i.e. the _ica suffix is
+    # replaced rather than appended. That is the name ICA/bidsfun_iclabel.m writes too,
+    # so whichever implementation produced the labels, downstream code opens one path.
+    stem = mat_path.stem[: -len("_ica")] if mat_path.stem.endswith("_ica") else mat_path.stem
+    tsv_path = mat_path.with_name(stem + "_iclabels.tsv")
+    json_path = mat_path.with_name(stem + "_iclabels.json")
+
+    mat = sio.loadmat(mat_path, simplify_cells=True)
+    if "ic_classification" in mat and tsv_path.is_file():
+        if not REFRESH_ICLABEL:
+            print(f"  ICLabel: already labelled ({tsv_path.name})")
+            return None
+        print(f"  REFRESH_ICLABEL: relabelling and overwriting {tsv_path.name}")
+
+    ch_names = [str(c) for c in np.atleast_1d(mat["chanlabels"])]
+    data_file = Path(str(mat["setfile"]))
+    if not data_file.is_file():
+        raise FileNotFoundError(
+            f"{mat_path.name} was fitted on {data_file}, which is not there any more -- "
+            f"ICLabel needs the data, not just the matrices."
+        )
+
+    # Checked before the data is touched: loading a subset of a full night only to
+    # find the matrices contradict each other wastes minutes for no reason.
+    unmixing = np.asarray(mat["icaweights"], dtype=float) @ np.asarray(mat["icasphere"], dtype=float)
+    if not np.allclose(unmixing, np.linalg.pinv(np.asarray(mat["icawinv"], dtype=float)),
+                       rtol=1e-5, atol=1e-8):
+        raise RuntimeError(
+            f"{mat_path.name}: icawinv is not the pseudo-inverse of icaweights @ icasphere "
+            f"-- the three matrices disagree, so any labels derived from them would "
+            f"describe a decomposition that does not exist."
+        )
+
+    t0 = time.perf_counter()
+    raw, minutes_used = iclabel_subset(data_file, ch_names, ICLABEL_MINUTES, ICLABEL_CHUNK_SECONDS)
+    print(f"  ICLabel: {minutes_used:.1f} min over {len(ch_names)} channels, "
+          f"{mat['icaweights'].shape[0]} components")
+    ica = _eeglab_style_ica(
+        np.asarray(mat["icaweights"], dtype=float),
+        np.asarray(mat["icasphere"], dtype=float),
+        raw.info,
+    )
+    probs = iclabel_label_components(raw, ica, inplace=False, backend=ICLABEL_BACKEND)
+    elapsed = time.perf_counter() - t0
+
+    top = probs.argmax(axis=1)
+    top_prob = probs.max(axis=1)
+    is_artefact = np.isin(top, ICLABEL_ARTEFACT_CLASSES) & (top_prob >= ICLABEL_THRESHOLD)
+
+    # Share of back-projected variance: var(activation) scaled by the squared norm of
+    # the component's scalp projection. Computed on the ICLabel subset, which is what
+    # is loaded here -- a variance ordering, not a claim about the whole night.
+    act = ica.unmixing_matrix_ @ ica.pca_components_ @ (raw.get_data() * 1e6)
+    backvar = act.var(axis=1) * (np.asarray(mat["icawinv"], dtype=float) ** 2).sum(axis=0)
+    varfrac = backvar / backvar.sum()
+
+    names = [ICLABEL_CLASSES[i] for i in top]
+    header = ["component", "label", "probability", "status", "varfrac", *ICLABEL_COLUMNS]
+    with open(tsv_path, "w", newline="\n") as f:
+        f.write("\t".join(header) + "\n")
+        for i in range(probs.shape[0]):
+            row = [f"IC{i + 1}", names[i], f"{top_prob[i]:.10g}",
+                   "bad" if is_artefact[i] else "good", f"{varfrac[i]:.10g}"]
+            row += [f"{p:.10g}" for p in probs[i]]
+            f.write("\t".join(row) + "\n")
+    print(f"  ICLabel: {int(is_artefact.sum())}/{probs.shape[0]} flagged bad -> {tsv_path.name}")
+    for cls in range(len(ICLABEL_CLASSES)):
+        n = int((top == cls).sum())
+        if n:
+            print(f"    {ICLABEL_CLASSES[cls]:<14} {n:3d}")
+
+    artefact_names = [ICLABEL_CLASSES[i] for i in ICLABEL_ARTEFACT_CLASSES]
+    with open(json_path, "w") as f:
+        json.dump(
+            {
+                "component":   {"Description": "Component identifier, IC<n>, in the row order of icaweights (AMICA components ordered by decreasing back-projected variance)."},
+                "label":       {"Description": "Most probable ICLabel class, one of: " + ", ".join(ICLABEL_CLASSES) + "."},
+                "probability": {"Description": "Posterior probability of the class named in 'label'."},
+                "status":      {"Description": "Whether the component is considered artefactual.",
+                                "Levels": {"good": "Retained.",
+                                           "bad": f"Top class in [{', '.join(artefact_names)}] with probability >= {ICLABEL_THRESHOLD}."}},
+                "varfrac":     {"Description": "Share of total back-projected variance: var(activation) * ||icawinv column||^2, normalised across components, computed on the ICLabel subset. A proxy for pvaf, not pvaf itself.",
+                                "Units": "fraction"},
+                **{col: {"Description": f'ICLabel posterior probability of class "{cls}".'}
+                   for col, cls in zip(ICLABEL_COLUMNS, ICLABEL_CLASSES)},
+                "GeneratedBy": {
+                    "Name": "run-pamica.py / mne-icalabel",
+                    "Description": "ICLabel via mne-icalabel, not the MATLAB EEGLAB plugin. Same network and class order; the two implementations agree closely but are not bit-identical.",
+                    "MinutesRequested": ICLABEL_MINUTES,
+                    "MinutesClassified": round(minutes_used, 2),
+                    "AssumedAverageReference": ICLABEL_ASSUME_AVGREF,
+                    "Backend": ICLABEL_BACKEND or "auto",
+                    "DurationMinutes": round(elapsed / 60, 3),
+                    "GeneratedDate": datetime.now().isoformat(),
+                },
+            },
+            f,
+            indent=2,
+        )
+
+    # Folded back into the .mat in the exact shape EEGLAB keeps it in, so MATLAB can
+    # assign it across without rearranging anything:
+    #   EEG.etc.ic_classification = S.ic_classification
+    #   EEG.reject.gcompreject    = S.gcompreject
+    # scipy writes a nested dict as a nested struct and an object array as a cell
+    # array, which is what EEG.etc.ic_classification.ICLabel.classes has to be.
+    # ICA/loadica.m does this together with the channel matching; see it for the rest.
+    mat.pop("__header__", None); mat.pop("__version__", None); mat.pop("__globals__", None)
+    mat["ic_classification"] = {
+        "ICLabel": {
+            "classes": np.array(ICLABEL_CLASSES, dtype=object),
+            "classifications": probs.astype(np.float64),
+            # EEGLAB's iclabel() writes 'default' here. Saying which implementation
+            # produced it matters: the two are not bit-identical, and this field is
+            # the only thing that travels with the numbers into MATLAB.
+            "version": "default (mne-icalabel)",
+        }
+    }
+    mat["iclabel_labels"] = np.array(names, dtype=object)
+    mat["gcompreject"] = is_artefact.reshape(1, -1)     # EEGLAB wants 1 x ncomp
+    mat["varfrac"] = varfrac.reshape(-1, 1)
+    sio.savemat(mat_path, mat)
+    return probs
 
 
 if __name__ == "__main__":
@@ -405,9 +707,19 @@ if __name__ == "__main__":
         if found:
             last_progress = time.monotonic()
             for data_file in found:
-                final_ll = run_amica(data_file, deriv_out)
+                final_ll, mat_path = run_amica(data_file, deriv_out)
                 if final_ll is not None:
                     print(f"{data_file.stem}: final LL = {final_ll:.5f}")
+                # Runs for skipped recordings too: the fit is what is expensive and
+                # already-done, the labels may simply never have been made.
+                if RUN_ICLABEL and mat_path.is_file():
+                    try:
+                        run_iclabel(mat_path)
+                    except Exception as exc:  # noqa: BLE001
+                        # The AMICA output is written and valid at this point; losing
+                        # the whole batch over a labelling problem would be worse than
+                        # carrying on and relabelling later.
+                        print(f"  ICLabel FAILED for {mat_path.name}: {exc!r}")
         if not pending:
             break
         stalled_for = time.monotonic() - last_progress
