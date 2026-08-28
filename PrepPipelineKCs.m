@@ -17,14 +17,14 @@ home = '\\vs03.herseninstituut.knaw.nl'; % windows
 BIDS = BIDS_KCs{1}; fails = [];
 
 % Variables
-acqlabel        = '';    % acqlabel of EEG file, leave '' if not used
+acqlabel        = '250Hz';    % acqlabel of EEG file, leave '' if not used
 refresh         = false; % re-run when outputs already exist
 refreshFigures  = false; % re-run when figures alreaady exist
 targetsrate     = 250;   % down-sample to this srate
 removeDC        = false; % apply 0.1 Hz high-pass filter?
 derivfolder     = 'prep-zc-ged'; % name of output folder within derivatives folder
 scoringpath     = fullfile(BIDS.pth, 'derivatives', 'scoring'); % where to find scoring files
-leadfieldpath   = fullfile(home, 'VS03-SandD-3', 'PM', 'Data_Analysis', 'Brainstorm_db', 'DROP_Leadfields2', 'data'); % where to find leadfield matrices
+leadfieldpath   = fullfile(home, 'VS03-SandD-3', 'KCs', 'Data_BIDS', 'derivatives', 'Brainstorm_db', 'KCs', 'data'); % where to find leadfield matrices
 BIDS.description = []; BIDS.description.Name = 'KCs'; % some actions are project specific (e.g., chanlocs import)
 
 % "desc" labels 
