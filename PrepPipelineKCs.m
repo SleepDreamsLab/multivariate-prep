@@ -11,10 +11,10 @@ home = '\\vs03.herseninstituut.knaw.nl'; % windows
 
 %%% Build BIDS structure from data folder
 %%% BIDS structure contains all pathing and subject information
-[BIDS_KC] = smartcache( ...
+[BIDS_KCs] = smartcache( ...
     @() bidswizard({'KCs'}, fullfile(home, 'VS03-SandD-3'), 'Data_BIDS'), ...
-    fullfile(pwd, 'BidsFiles', 'BIDS_KC.mat'), false, {'BIDS_KC'}); 
-BIDS = BIDS_KC{1}; fails = [];
+    fullfile(pwd, 'BidsFiles', 'BIDS_KCs.mat'), false, {'BIDS_KCs'}); 
+BIDS = BIDS_KCs{1}; fails = [];
 
 % Variables
 acqlabel        = '';    % acqlabel of EEG file, leave '' if not used
@@ -25,7 +25,7 @@ removeDC        = false; % apply 0.1 Hz high-pass filter?
 derivfolder     = 'prep-zc-ged'; % name of output folder within derivatives folder
 scoringpath     = fullfile(BIDS.pth, 'derivatives', 'scoring'); % where to find scoring files
 leadfieldpath   = fullfile(home, 'VS03-SandD-3', 'PM', 'Data_Analysis', 'Brainstorm_db', 'DROP_Leadfields2', 'data'); % where to find leadfield matrices
-BIDS.description = []; BIDS.description.Name = 'KC'; % some actions are project specific (e.g., chanlocs import)
+BIDS.description = []; BIDS.description.Name = 'KCs'; % some actions are project specific (e.g., chanlocs import)
 
 % "desc" labels 
 % output filenames receive a "desc" label, indicating what was done to them
