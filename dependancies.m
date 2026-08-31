@@ -46,6 +46,7 @@ addpath('GEDAI')
 addpath('BidsFiles')
 addpath('chanlocs')
 addpath('ICA')
+addpath('GED')     % -> ged (generalized eigendecomposition)
 addpath('Leadfield')  % -> ExecuteLeadfieldBuilder, build_leadfield_bids
 addpath('SleepOsci')  % -> run_sleeposci_bids
 

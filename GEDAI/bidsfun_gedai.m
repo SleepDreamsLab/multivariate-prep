@@ -36,6 +36,25 @@ function failures = bidsfun_gedai(BIDS, opts)
 %                     Default: 'filtGEDAI'
 %   refresh           Force re-run even if a cache file exists. Default: false.
 %
+%   Parallel machines
+%   -----------------
+%   Several machines can be pointed at the same BIDS root and the same savepath at
+%   once. Each recording is claimed with a lock file before any work starts, so a
+%   second machine walking the same list skips whatever the first is busy with
+%   instead of duplicating it. The claim is released when the recording finishes,
+%   when it errors, and when the run is interrupted with Ctrl-C, so a failure never
+%   parks a recording permanently. See claimFile.
+%
+%   uselocks          Claim each recording before processing it. Default: true.
+%                     Set false for a single-machine run over a local savepath.
+%   lockpath          Directory holding the claim files.
+%                     Default: <savepath>/.locks
+%   lockstalemin      Minutes after which a claim whose heartbeat stopped is taken
+%                     over - the escape hatch for a machine that crashed or was
+%                     rebooted mid-recording. Keep it well above the longest
+%                     plausible single-recording runtime. Default: 360 (6 h).
+%   lockheartbeatmin  Minutes between heartbeat writes on a held claim. Default: 5.
+%
 %   EEG
 %   ---
 %   tasklabel         BIDS task label(s) to query. Default: {'Sleep','sleep'}.
@@ -88,6 +107,12 @@ arguments
     opts.refresh (1,1) logical = false
     opts.savefileext      char = '.set'
 
+    %--- Parallel machines ---
+    opts.uselocks (1,1) logical = true
+    opts.lockpath         char  = ''
+    opts.lockstalemin     (1,1) double {mustBePositive} = 360
+    opts.lockheartbeatmin (1,1) double {mustBePositive} = 5
+
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
     opts.acqlabel    char               = '125Hz'
@@ -115,6 +140,7 @@ fprintf('\n=== Running bidsfun_gedai ===\n');
 if isempty(opts.inputpath), opts.inputpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.savepath),  opts.savepath  = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.figpath),   opts.figpath   = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
+if isempty(opts.lockpath),  opts.lockpath  = fullfile(opts.savepath, '.locks'); end
 
 KeepTime = struct();
 if isempty(opts.runs), opts.runs = gedai.defaultRuns();
@@ -150,21 +176,32 @@ for ifile = 1:numel(filesEEG)
     fprintf('\n=== %s ===\n', fileID)
 
     %%% Skip this file entirely if every configured run's output already exists and
-    %%% refresh is not requested. Checked here, before the scoring load and the (slow)
-    %%% EEG import below, since none of that work is needed just to decide there is
-    %%% nothing to do. The per-run check further down stays as well, to still resume
-    %%% correctly if only some runs' outputs are missing.
-    if ~opts.refresh
-        gedaiRunDir = fullfile(opts.savepath, subDir);
-        runsPending = false;
-        for iRun = 1:numel(opts.runs)
-            gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' opts.geddesc '_eeg' opts.savefileext]);
-            if ~isfile(gedaiDatFile)
-                runsPending = true;
-                break
-            end
+    %%% refresh is not requested.
+    if ~opts.refresh && ~runsPending(opts, subDir, fileID)
+        fprintf('[skip] all run output(s) exist for %s\n', fileID)
+        continue
+    end
+
+    %%% Claim this recording, so a second machine walking the same list moves on to the
+    %%% next one instead of redoing this. The lock file is created with an atomic
+    %%% create-if-absent, so two machines reaching this line together cannot both win.
+    %%% lockGuard holds the claim: it releases on success, on the error caught below,
+    %%% and on Ctrl-C or any error that unwinds out of this function, so a recording is
+    %%% never left claimed by a run that is no longer working on it. Hence the explicit
+    %%% clear at the end of the iteration - the claim must not outlive its recording.
+    lockGuard = [];  %#ok<NASGU> release any claim still held from the previous iteration
+    if opts.uselocks
+        [lockGuard, acquired, holder] = claimFile( ...
+            fullfile(opts.lockpath, [fileID '.lock']), ...
+            'stalemin', opts.lockstalemin, 'heartbeatmin', opts.lockheartbeatmin); %#ok<ASGLU>
+        if ~acquired
+            fprintf('[skip] %s: claimed by %s (pid %d) since %s\n', ...
+                fileID, holder.host, holder.pid, holder.started)
+            continue
         end
-        if ~runsPending
+        %%% Re-check now that the claim is ours: the other machine may have finished
+        %%% this recording and dropped its lock between our skip check above and here.
+        if ~opts.refresh && ~runsPending(opts, subDir, fileID)
             fprintf('[skip] all run output(s) exist for %s\n', fileID)
             continue
         end
@@ -381,6 +418,11 @@ for ifile = 1:numel(filesEEG)
         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
         failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport(), 'timestamp', datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss')); %#ok<AGROW>
     end
+
+    %%% Drop the claim, whether the recording succeeded or failed. A failed recording
+    %%% has to become available again - it is exactly the one another machine (or a
+    %%% later run of this one) should be free to retry.
+    clear lockGuard
 end
 
 %%% Failure summary
@@ -396,6 +438,23 @@ if ~isempty(failures)
 end
 
 end % bidsfun_gedai
+
+% -------------------------------------------------------------------------
+function tf = runsPending(opts, subDir, fileID)
+% True when at least one configured run has no output yet. Checked before the scoring
+% load and the (slow) EEG import, since none of that is needed just to decide there is
+% nothing to do. The per-run check further down stays as well, to still resume
+% correctly if only some runs' outputs are missing.
+tf = false;
+for iRun = 1:numel(opts.runs)
+    gedaiDatFile = fullfile(opts.savepath, subDir, ...
+        [fileID '_desc-' opts.geddesc '_eeg' opts.savefileext]);
+    if ~isfile(gedaiDatFile)
+        tf = true;
+        return
+    end
+end
+end
 
 % -------------------------------------------------------------------------
 function mode = resolveStageMode(stages, dict)

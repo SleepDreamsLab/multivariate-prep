@@ -1,14 +1,15 @@
-function failures = bidsfun_subcomp(BIDS, opts)
-% BIDSFUN_SUBCOMP  Subtract the ICLabel-flagged ICA components from a BIDS EEG.
+function [failures, GEDs] = bidsfun_subcomp(BIDS, opts)
+% BIDSFUN_SUBCOMP  Subtract the ICLabel-flagged ICA components, then run a GED.
 %
 %   Per recording: load the bidsfun_gedai .set and the run-pamica.py _ica.mat,
 %   attach the decomposition (loadica), subtract the components flagged as artefact
-%   with pop_subcomp, and save the result as a new derivative. Nothing else - no
-%   filtering, referencing, interpolation or figures.
+%   with pop_subcomp, and hand the cleaned recording to ged() - the generalized
+%   eigendecomposition (see GED/ged.m). Nothing is written to disk: the GED results
+%   are returned so the caller can inspect them and decide what is worth keeping.
 %
 %   Reads   <inputpath>/<sub>/<ses>/<fileID>_desc-<inputdesc>_eeg<inputfileext>
 %           <icapath>/<sub>/<ses>/<fileID>_desc-<icadesc>_ica.mat   (+ _iclabels.tsv)
-%   Writes  <savepath>/<sub>/<ses>/<fileID>_desc-<desc>_eeg.set     (+ .json sidecar)
+%   Writes  nothing.
 %
 %   The flags come from the _iclabels.tsv `status` column when preferstatus is true
 %   (the default - that is the file meant to be hand-screened), otherwise from the
@@ -16,19 +17,27 @@ function failures = bidsfun_subcomp(BIDS, opts)
 %   not an error), so run-pamica.py can still be writing it on another machine.
 %
 %   Name-value, all optional:
-%     derivfolder                     derivatives subfolder for the inputs and output ('prep-ged')
+%     derivfolder                     derivatives subfolder for the inputs ('prep-ged')
 %     inputpath/inputdesc/inputfileext   the EEG          ('' -> deriv, 'filt2ged', '.set')
 %     icapath/icadesc                     the _ica.mat    ('' -> inputpath, 'pamica')
-%     savepath/desc                       the output      ('' -> deriv, '' -> [inputdesc 'ic'])
 %     preferstatus                    obey the .tsv status column over gcompreject   (true)
-%     refresh                         re-run even if the output exists               (false)
+%     gedargs                         name-value cell forwarded to ged(), e.g.
+%                                     {'contrast','spectral','peakfreq',13.5,'fwhm',2}
+%                                     ({} -> ged's own defaults: a 10 Hz spectral
+%                                     contrast against broadband)
 %     tasklabel/acqlabel/subjectfilter/sessionfilter        BIDS query and filters
+%
+%   Outputs:
+%     failures   cell of structs, one per recording that errored
+%     GEDs       struct array with fields fileID, removed (the subtracted ICs) and
+%                ged (the struct ged() returned)
 %
 % Methods section:
 %
 % The independent components classified as artefact (see bidsfun_iclabel /
 % run-pamica.py) were removed by subtracting their back-projection from the sensor
-% data; no further processing was applied at this stage.
+% data. The cleaned recordings then entered a generalized eigendecomposition
+% (Cohen, 2022) to derive spatial filters maximising the contrast of interest.
 
 arguments
     BIDS
@@ -38,10 +47,8 @@ arguments
     opts.inputfileext  char = '.set'
     opts.icapath       char = ''
     opts.icadesc       char = 'pamica'
-    opts.savepath      char = ''
-    opts.desc          char = ''
-    opts.refresh (1,1) logical = false
     opts.preferstatus (1,1) logical = true
+    opts.gedargs       cell = {}
     opts.tasklabel          = {'Sleep', 'sleep'}
     opts.acqlabel      char = ''
     opts.subjectfilter cell = {}
@@ -52,8 +59,6 @@ fprintf('\n=== Running bidsfun_subcomp ===\n');
 
 if isempty(opts.inputpath), opts.inputpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.icapath),   opts.icapath   = opts.inputpath; end
-if isempty(opts.savepath),  opts.savepath  = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
-if isempty(opts.desc),      opts.desc      = [opts.inputdesc 'ic']; end
 
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
     'task', opts.tasklabel, 'acq', opts.acqlabel);
@@ -62,6 +67,7 @@ if isempty(filesEEG)
 end
 
 failures = {};
+GEDs     = struct('fileID', {}, 'removed', {}, 'ged', {});
 for ifile = 1:numel(filesEEG)
     p      = bids.internal.parse_filename(filesEEG{ifile});
     fileID = strjoin(cellfun(@(k) [k '-' p.entities.(k)], fieldnames(p.entities), 'uni', 0), '_');
@@ -71,14 +77,9 @@ for ifile = 1:numel(filesEEG)
     if ~isempty(opts.sessionfilter) && ~contains(fileID, opts.sessionfilter), continue, end
     fprintf('\n=== %s ===\n', fileID)
 
-    base    = [fileID '_desc-' opts.desc '_eeg'];
     inFile  = fullfile(opts.inputpath, subDir, [fileID '_desc-' opts.inputdesc '_eeg' opts.inputfileext]);
     icaFile = fullfile(opts.icapath,   subDir, [fileID '_desc-' opts.icadesc   '_ica.mat']);
-    outDir  = fullfile(opts.savepath,  subDir);
 
-    if ~opts.refresh && isfile(fullfile(outDir, [base '.set']))
-        fprintf('[skip] output exists\n'); continue
-    end
     if ~isfile(inFile) || ~isfile(icaFile)
         fprintf('[skip] input not ready (EEG %d, ICA %d)\n', isfile(inFile), isfile(icaFile)); continue
     end
@@ -103,13 +104,11 @@ for ifile = 1:numel(filesEEG)
         EEG.etc.ic_subtraction = struct('icaFile', icaFile, 'removed', badComps);
         [EEG.icaweights, EEG.icasphere, EEG.icawinv, EEG.icachansind, EEG.icaact] = deal([]);
 
-        if ~exist(outDir, 'dir'), mkdir(outDir); end
-        EEG.data = single(EEG.data);
-        pop_saveset(EEG, 'filename', [base '.set'], 'filepath', outDir);
-        sidecarjson(struct(), fullfile(outDir, [base '.json']), struct( ...
-            'Description',       'ICA artefact components subtracted from the recording.', ...
-            'Sources',           {{inFile, icaFile}}, ...
-            'RemovedComponents', badComps));
+        %%% GED on the cleaned recording. Which contrast to run is the caller's
+        %%% decision (gedargs) - it is the choice that determines what the spatial
+        %%% filters end up isolating.
+        GED = ged(EEG, opts.gedargs{:});
+        GEDs(end+1) = struct('fileID', fileID, 'removed', badComps, 'ged', GED); %#ok<AGROW>
 
     catch ME
         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
