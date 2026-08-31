@@ -269,7 +269,7 @@ end
 hold(ax, 'on');
 for x = 1.5:1:numel(colLabels)-0.5, xline(ax, x, 'Color', [1 1 1], 'LineWidth', 0.5); end
 for k = 2:numel(firstIdx)
-    yline(ax, firstIdx(k) - 0.5, 'Color', [0 0 0], 'LineWidth', 1);
+    yline(ax, firstIdx(k) - 0.5, 'Color', [0.6 0.6 0.6 0.4], 'LineWidth', 0.75);
 end
 hold(ax, 'off');
 
