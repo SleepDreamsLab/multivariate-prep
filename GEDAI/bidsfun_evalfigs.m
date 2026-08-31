@@ -91,6 +91,8 @@ arguments
 
     %--- Epoch ---
     opts.epochlength (1,1) double = 30
+    opts.epochstoplot             = []
+    
 
     %--- Plots (forwarded to run.eval_clean) ---
     opts.PlotCharacteristics  (1,1) logical = true
@@ -230,6 +232,9 @@ for ifile = 1:numel(filesEEG)
             EEGafter.data = EEGafter.data - sum(EEGafter.data, 1) / (size(EEGafter.data, 1) + 1);
         end
 
+        %%% Epochs to plot
+        epochsToPlot = gedai.resolveEpochsToPlot(opts.epochstoplot, scoringDigits);
+
         %%% Evaluate
         figDir = fullfile(opts.figpath, ['desc-' opts.afterdesc], subDir);
         if ~exist(figDir, 'dir'), mkdir(figDir); end
@@ -239,6 +244,7 @@ for ifile = 1:numel(filesEEG)
             'SavePath', fullfile(figDir, fileID), ...
             'refresh', opts.refresh, ...
             'net', opts.net, ...
+            'EpochsToPlot', epochsToPlot, ...
             'PlotCharacteristics', opts.PlotCharacteristics, ...
             'PlotPsdPerStage', opts.PlotPsdPerStage, ...
             'PlotPsdPerStageChans', opts.PlotPsdPerStageChans, ...
