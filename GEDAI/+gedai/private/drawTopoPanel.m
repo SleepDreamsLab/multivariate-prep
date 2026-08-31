@@ -28,7 +28,7 @@ function drawTopoPanel(vals, chanlocs, hilite, cl, cbLabel, hilite2)
 %   by exactly that amount. readlocs() instead NaN-pads such channels, keeping every
 %   index aligned with chanlocs, which is what topoplot's own internal call to it does.
 %
-%   Private to +gedai so plotBadChannels and plotLineNoiseZ cannot drift apart.
+%   Private to +gedai, shared by the plotBadChannels topo panels.
 
 if nargin < 5, cbLabel = ''; end
 if nargin < 6, hilite2 = []; end
