@@ -207,7 +207,8 @@ for ifile = 1:numel(filesEEG)
         while numel(scoringDigits) > nEpochs; scoringDigits(end) = []; end
 
         %%% Drop non-EEG channels (in case filtered file still carries extras)
-        EEG = pop_select(EEG, 'nochannel', intersect(1:EEG.nbchan, opts.noteegchannels));
+        elabels = arrayfun(@(x) ['E' num2str(x)], opts.noteegchannels, 'uni', 0);
+        EEG = pop_select(EEG, 'nochannel', intersect({EEG.chanlocs.labels}, elabels));
 
         %%% Channel locations
         %%% Only for legacy inputs: bidsfun_hp_zap_cleanline now writes .set, which already
@@ -242,8 +243,9 @@ for ifile = 1:numel(filesEEG)
         fprintf('%d channel(s) were removed as bad previously\n', nnz(removed_channels))
 
         %%% Leadfield covariance matrix
-        fprintf('removing the same %d bad channels from leadfield matrix ...\n', nnz(removed_channels))
-        lfCOV = gedai.loadrefcov(opts.leadfielddir, p, numel(removed_channels), removed_channels);
+        fprintf('removing the same %d bad channels, as well as non-EEG channels from leadfield matrix ...\n', ...
+            nnz(removed_channels))
+        lfCOV = gedai.loadrefcov(opts.leadfielddir, p, numel(removed_channels), removed_channels, opts.noteegchannels);
 
         %%% Average re-reference
         EEG.data = EEG.data - sum(EEG.data, 1) / (size(EEG.data, 1) + 1);
@@ -279,6 +281,11 @@ for ifile = 1:numel(filesEEG)
             %%% configuration and stays comparable across recordings
             savename = [opts.prefix opts.runmode '_' ...
                 gedai.buildSaveName(r, EEG.srate, GEDAIMode_perStage, GEDAIModeBB_perStage)];
+            
+            geddesc = opts.geddesc;
+            if isempty(opts.geddesc)
+                geddesc = savename;
+            end
 
             %%% Drop stage groups absent from scoring
             presentStages      = unique(scoringDigits_NoN1);
@@ -292,8 +299,8 @@ for ifile = 1:numel(filesEEG)
 
             %%% Paths for this run
             gedaiRunDir  = fullfile(opts.savepath, subDir);
-            gedaiFigDir  = fullfile(opts.figpath, ['desc-' opts.geddesc], fileID);
-            gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' opts.geddesc '_eeg' opts.savefileext]);
+            gedaiFigDir  = fullfile(opts.figpath, ['desc-' geddesc], fileID);
+            gedaiDatFile = fullfile(gedaiRunDir, [fileID '_desc-' geddesc '_eeg' opts.savefileext]);
 
             %%% Skip run if output already exists and refresh not requested
             if ~opts.refresh && isfile(gedaiDatFile)
@@ -350,6 +357,7 @@ for ifile = 1:numel(filesEEG)
                     'net', opts.net, 'SavePath', fullfile(gedaiFigDir, fileID));
                 pause(1)
                 close all;
+                pause(4)
             end
 
             %         %%% Write savename marker
