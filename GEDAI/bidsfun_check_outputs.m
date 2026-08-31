@@ -50,6 +50,8 @@ arguments
     opts.checkfigures (1,1) logical = true
     opts.checkica     (1,1) logical = true
     opts.csvout         char = ''
+    opts.plot   (1,1) logical = true
+    opts.plotfile       char = ''
 end
 
 if isempty(opts.savepath), opts.savepath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
@@ -213,6 +215,86 @@ if ~isempty(opts.csvout)
     fprintf('\nStatus table written to %s\n', opts.csvout);
 end
 
+%%% ---- Heatmap ----
+fig = [];
+if opts.plot
+    if isempty(opts.plotfile)
+        opts.plotfile = fullfile(opts.figpath, 'prep_status_heatmap.png');
+    end
+    fig = plotStatusHeatmap(statusMat(:, showIdx), colLabels(showIdx), ...
+        cellfun(@(r) r.fileID, rows, 'uni', 0), opts.plotfile, opts.refresh);
+end
+
 report = struct('table', T, 'rows', {rows}, 'todo', {todoList}, 'missing', {missList}, ...
-    'colLabels', {colLabels}, 'files', {filesEEG});
+    'colLabels', {colLabels}, 'files', {filesEEG}, 'figure', fig);
+end
+
+% -------------------------------------------------------------------------
+function fig = plotStatusHeatmap(S, colLabels, fileIDs, savefile, isRefresh)
+% imagesc grid: rows = recordings, columns = one file per pipeline stage.
+%   0 missing (red) | 1 present (green) | 2 present-but-stale (amber) | NaN not checked (grey)
+nRow = size(S, 1);
+M = S; M(isnan(M)) = -1;          % fold "not checked" into its own colour bin
+
+fig = figure('Color', 'w', 'Name', 'prep status', ...
+    'Position', [100 100 max(560, 90*numel(colLabels)+260) min(1100, 260+14*nRow)]);
+ax = axes(fig);
+imagesc(ax, M);
+cmap = [0.75 0.75 0.75;   % -1 not checked
+        0.85 0.20 0.20;   %  0 missing
+        0.20 0.65 0.30;   %  1 present
+        0.95 0.70 0.15];  %  2 stale
+colormap(ax, cmap);
+set(ax, 'CLim', [-1.5 2.5]);
+
+ax.XTick = 1:numel(colLabels);
+ax.XTickLabel = colLabels;
+ax.XTickLabelRotation = 30;
+ax.TickLabelInterpreter = 'none';
+ax.XAxisLocation = 'top';
+
+%%% Y ticks: one per subject, at its first recording (306 individual labels are unreadable)
+subj = regexprep(fileIDs(:), '_.*$', '');
+firstIdx = find([true; ~strcmp(subj(2:end), subj(1:end-1))]);
+if numel(firstIdx) <= 80
+    ax.YTick = firstIdx;
+    ax.YTickLabel = subj(firstIdx);
+else
+    ax.YTick = firstIdx(1:ceil(numel(firstIdx)/60):end);
+    ax.YTickLabel = subj(ax.YTick);
+end
+
+%%% Grid lines between cells
+hold(ax, 'on');
+for x = 1.5:1:numel(colLabels)-0.5, xline(ax, x, 'Color', [1 1 1], 'LineWidth', 0.5); end
+hold(ax, 'off');
+
+nMiss = nnz(S == 0);
+title(ax, sprintf('Prep pipeline outputs  -  %d recordings, %d missing file(s)%s', ...
+    nRow, nMiss, ternary(isRefresh, '  (refresh: amber = would be overwritten)', '')), ...
+    'Interpreter', 'none');
+
+%%% Legend via dummy patches
+labels = {'missing', 'present', 'stale', 'not checked'};
+cidx   = [2 3 4 1];
+h = gobjects(1, 4);
+for k = 1:4
+    h(k) = patch(ax, NaN, NaN, cmap(cidx(k), :), 'EdgeColor', 'k');
+end
+legend(ax, h, labels, 'Location', 'southoutside', 'Orientation', 'horizontal', 'Box', 'off');
+
+if ~isempty(savefile)
+    d = fileparts(savefile);
+    if ~isempty(d) && ~exist(d, 'dir'), mkdir(d); end
+    try
+        exportgraphics(fig, savefile, 'Resolution', 150);
+    catch
+        saveas(fig, savefile);
+    end
+    fprintf('\nHeatmap written to %s\n', savefile);
+end
+end
+
+function out = ternary(cond, a, b)
+if cond, out = a; else, out = b; end
 end
