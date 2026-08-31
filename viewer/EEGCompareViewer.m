@@ -17,7 +17,7 @@ icafile = 'sub-drop0001_ses-t1_task-sleep_run-01_desc-pamica_ica';
 scoringFile = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\derivatives\scores\final\sub-drop0001_ses-t1_task-sleep_run-01_eeg.csv';
 
 %%% Variables
-icaSource = 'pam';  % 'mod' = byte-identical Fortran output (loadmodout15), cross-checked against pam
+icaSource = 'pylabel';  % 'mod' = byte-identical Fortran output (loadmodout15), cross-checked against pam
                     % 'pam' = pamica-computed (.mat) decomposition alone, no Fortran binary needed
 net = 'EGI256';     % net type, passed to chans1020
 targetrate = 250;   % down-sample for speed
@@ -41,16 +41,28 @@ switch icaSource
         pam = load(fullfile(icaroot, [icafile '.mat']));        
         mod = loadmodout15(fullfile(icaroot, icafile));   % W, S — byte-identical to Fortran
         EEG = icaFromMod(EEG, pam, mod, file, icafile);
+
+        % ICLabel
+        EEG = iclabel(EEG);
+        EEG = selectcomps(EEG, 'ArtefactThreshold', .0, 'ManualQC', false, 'ICLabelClasses', [2:7]);
+        badComps = find(EEG.reject.gcompreject);
+        % EEG2 = pop_subcomp(EEG, badComps, 0);  
+
     case 'pam'
         pam = load(fullfile(icaroot, [icafile '.mat']));        
         EEG = icaFromPam(EEG, pam, file, icafile);
+
+        % ICLabel
+        EEG = iclabel(EEG);
+        EEG = selectcomps(EEG, 'ArtefactThreshold', .0, 'ManualQC', false, 'ICLabelClasses', [2:7]);
+        badComps = find(EEG.reject.gcompreject);
+        % EEG2 = pop_subcomp(EEG, badComps, 0);     
+        
+    case 'pylabel'
+        EEG = loadica(EEG, fullfile(icaroot, [icafile '.mat']))
 end
 
-% ICLabel
-EEG = iclabel(EEG);
-EEG = selectcomps(EEG, 'ArtefactThreshold', .0, 'ManualQC', false, 'ICLabelClasses', [2:7]);
-badComps = find(EEG.reject.gcompreject);
-EEG2 = pop_subcomp(EEG, badComps, 0);
+
 
 % Scoring
 scoringDigits = [];

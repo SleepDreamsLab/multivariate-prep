@@ -81,7 +81,7 @@ nChFull = numel(chLabelsFull);
 % for channels the one useful grouping is the 10-20 montage plus EOG, which
 % is what chans1020 relabels a high-density net down to. Left empty when
 % nothing matches, which hides the row rather than offering a no-op.
-chanClass = double(is1020Label(chLabelsFull));
+chanClass = is1020Label(chLabelsFull);   % logical membership column, see pickerDialog
 if any(chanClass)
     chanGroups = {'10-20 system + EOG'};
 else
@@ -102,7 +102,7 @@ end
 src = struct('name', {}, 'data', {}, 'rowOf', {}, 'hasICA', {}, 'unmix', {}, ...
              'winv', {}, 'icachansind', {}, 'posInICA', {}, 'nComp', {}, ...
              'icTick', {}, 'icText', {}, 'icClass', {}, 'classNames', {}, ...
-             'subIdx', {}, 'subP', {}, 'icaChanlocs', {});
+             'subIdx', {}, 'subP', {}, 'icaChanlocs', {}, 'icProb', {}, 'isGood', {});
 for k = 1:nSrc
     E = srcEEG{k};
     src(k).name  = srcName{k};
@@ -573,10 +573,11 @@ applyRowSelection();   % builds ticks/ylim/zero-lines and redraws
         % setup loops' k. Hence kSub/kSer/jLine below.
         confirmed = false;
         for kSub = icaSrc
+            [gNames, gMask] = icGroups(src(kSub));
             [sel, ok] = viewer.pickerDialog(src(kSub).icText, src(kSub).subIdx, ...
                 sprintf('Subtract ICs - %s', src(kSub).name), ...
                 'Components to project out (highlighted = currently subtracted):', ...
-                'Subtract', src(kSub).classNames, src(kSub).icClass);
+                'Subtract', gNames, gMask);
             if ~ok, continue; end
             src(kSub).subIdx = sel;
             % Fold the whole "unmix, zero the bad components, remix" round
@@ -598,14 +599,23 @@ applyRowSelection();   % builds ticks/ylim/zero-lines and redraws
         if isempty(icaPrimary), return; end
         tCb = tic;
         pIC = icaPrimary;
+        [gNames, gMask] = icGroups(src(pIC));
         [sel, ok] = viewer.pickerDialog(src(pIC).icText, selICIdx, ...
             sprintf('IC topographies - %s', src(pIC).name), ...
             'Components to plot as topographies:', ...
-            'Plot Topos', src(pIC).classNames, src(pIC).icClass);
+            'Plot Topos', gNames, gMask);
         if ~ok || isempty(sel), return; end
         try
+            topoOpts            = struct();
+            topoOpts.classOf    = src(pIC).icClass;
+            topoOpts.classNames = src(pIC).classNames;
+            topoOpts.isGood     = src(pIC).isGood;
+            % The verdict lives here, not in the topography window: the
+            % toggles edit this copy through onChange, so closing that window
+            % keeps the judgement and every picker opened afterwards shows it.
+            topoOpts.onChange   = @(g) setGoodBad(pIC, g);
             viewer.plotICTopos(src(pIC).winv, src(pIC).icaChanlocs, sel, ...
-                src(pIC).icTick, sprintf('IC topographies - %s', src(pIC).name));
+                src(pIC).icTick, sprintf('IC topographies - %s', src(pIC).name), topoOpts);
         catch ME
             % A missing topoplot or an unplaceable montage should not take
             % the viewer down with it.
@@ -623,13 +633,22 @@ applyRowSelection();   % builds ticks/ylim/zero-lines and redraws
             selChanIdx = sel;
         else
             p = icaPrimary;
+            [gNames, gMask] = icGroups(src(p));
             [sel, ok] = viewer.pickerDialog(src(p).icText, selICIdx, 'Select components', ...
                 'Components to plot (highlighted = currently shown):', ...
-                'Plot selected', src(p).classNames, src(p).icClass);
+                'Plot selected', gNames, gMask);
             if ~ok || isempty(sel), return; end
             selICIdx = sel;
         end
         applyRowSelection();
+    end
+
+    function setGoodBad(k, g)
+        % Called by the topography window whenever a good/bad toggle flips.
+        % Rebuilding icText (rather than patching it) keeps the picker rows
+        % and the group table from ever drifting out of step with the verdict.
+        src(k).isGood = logical(g(1:src(k).nComp));
+        src(k).icText = icPickerLabels(src(k));
     end
 
     function applyRowSelection()
@@ -962,9 +981,9 @@ s.posInICA(tf) = loc(tf);
 
 % Component labels: "IC 12   Muscle  87%" in the pickers, "IC 12 (Muscle)"
 % on the y-axis where space is tight.
-s.icTick = arrayfun(@(i) sprintf('IC %d', i), 1:s.nComp, 'UniformOutput', false);
-s.icText = s.icTick;
+s.icTick  = arrayfun(@(i) sprintf('IC %d', i), 1:s.nComp, 'UniformOutput', false);
 s.icClass = zeros(1, s.nComp);
+s.icProb  = zeros(1, s.nComp);
 if isfield(EEG, 'etc') && isfield(EEG.etc, 'ic_classification') && ...
         isfield(EEG.etc.ic_classification, 'ICLabel')
     L = EEG.etc.ic_classification.ICLabel;
@@ -972,15 +991,31 @@ if isfield(EEG, 'etc') && isfield(EEG.etc, 'ic_classification') && ...
     [p, cls] = max(L.classifications, [], 2);
     n = min(s.nComp, numel(cls));
     s.icClass(1:n) = cls(1:n);
+    s.icProb(1:n)  = p(1:n);
     % ICLabel's two-word class names ("Line Noise", "Channel Noise") are too
     % wide for the y-axis gutter, so the tick form keeps just the first word.
     % The pickers have room and show the name in full.
     short = regexprep(s.classNames, '\s.*$', '');
     for i = 1:n
         s.icTick{i} = sprintf('IC %d (%s)', i, short{cls(i)});
-        s.icText{i} = sprintf('IC %-4d %-11s %3.0f%%', i, s.classNames{cls(i)}, p(i)*100);
     end
 end
+
+% Good/bad verdict per component. This is USER STATE, not a property of the
+% decomposition: it starts from ICLabel (Brain is good, everything else bad)
+% and the topography window's toggles edit it in place, so a judgement made
+% there survives closing that window and shows up in every picker afterwards.
+% With no ICLabel at all everything starts good -- nothing is known to be
+% artefactual, and defaulting to bad would amount to recommending you discard
+% a decomposition nobody has judged yet.
+s.isGood = true(1, s.nComp);
+if ~isempty(s.classNames)
+    brainCls = find(strcmpi(s.classNames, 'Brain'), 1);
+    if ~isempty(brainCls)
+        s.isGood = s.icClass == brainCls;
+    end
+end
+s.icText = icPickerLabels(s);
 
 % Default subtraction set: every non-brain component when ICLabel says so,
 % otherwise whatever a previous selectcomps/pop_selectcomps run flagged.
@@ -1036,6 +1071,41 @@ elseif m < 7.5, m = 5;
 else,           m = 10;
 end
 v = m * 10^e;
+end
+
+
+function txt = icPickerLabels(s)
+% One row per component for the picker lists: number, ICLabel class and
+% confidence, then the current good/bad verdict. Regenerated (not patched)
+% whenever the verdict changes, so the lists can never drift out of step
+% with it.
+txt = cell(1, s.nComp);
+for i = 1:s.nComp
+    if s.isGood(i), verdict = 'good'; else, verdict = 'bad'; end
+    if ~isempty(s.classNames) && s.icClass(i) >= 1
+        txt{i} = sprintf('IC %-4d %-11s %3.0f%%   %s', ...
+            i, s.classNames{s.icClass(i)}, s.icProb(i)*100, verdict);
+    else
+        txt{i} = sprintf('IC %-4d %-17s %s', i, '', verdict);
+    end
+end
+end
+
+
+function [names, mask] = icGroups(s)
+% Group table for the picker's Add/Remove row: one column per ICLabel class,
+% then one for "good" and one for "bad".
+%
+% Membership is a logical MATRIX rather than one class index per component,
+% because good/bad is orthogonal to the ICLabel class -- a component is both
+% "Eye" and "bad" at once, and both need to be selectable.
+names = [s.classNames(:).', {'good', 'bad'}];
+mask  = false(s.nComp, numel(names));
+for k = 1:numel(s.classNames)
+    mask(:, k) = s.icClass(:) == k;
+end
+mask(:, end-1) = s.isGood(:);
+mask(:, end)   = ~s.isGood(:);
 end
 
 

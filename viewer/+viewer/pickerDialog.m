@@ -13,7 +13,8 @@ function [sel, ok] = pickerDialog(itemLabels, preselected, dlgName, promptStr, c
 %   confirmStr  label on the confirm button (e.g. 'Subtract')
 %   classNames  cellstr of group names (IC classes, channel montages, ...),
 %               {} to hide the group row
-%   classOfItem per-item index into classNames (0 = uncategorised)
+%   classOfItem nItems x nGroups logical membership matrix, or a numeric
+%               per-item group index (0 = uncategorised) for exclusive groups
 %
 %   sel  selected indices (equal to preselected if cancelled)
 %   ok   true if the user confirmed
@@ -32,6 +33,22 @@ ok  = false;
 nItems     = numel(itemLabels);
 sel        = sel(sel >= 1 & sel <= nItems);
 hasClasses = ~isempty(classNames) && ~isempty(classOfItem);
+
+% Group membership is a logical nItems x nGroups MATRIX, because groups are
+% not mutually exclusive: an IC is both "Eye" and "bad" at the same time and
+% either must be selectable. A numeric one-group-per-item vector is still
+% accepted and expanded, for callers with a genuinely exclusive grouping.
+if hasClasses
+    if islogical(classOfItem)
+        groupMask = reshape(classOfItem, nItems, []);
+    else
+        groupMask = false(nItems, numel(classNames));
+        for gi = 1:numel(classNames)
+            groupMask(:, gi) = classOfItem(:) == gi;
+        end
+    end
+    hasClasses = size(groupMask, 2) == numel(classNames) && any(groupMask(:));
+end
 
 W = 380; H = 560;
 margin = 14; inner = W - 2*margin;
@@ -83,11 +100,11 @@ if isgraphics(dlg), delete(dlg); end
     function onClassAdd()
         % Union, not replace: the point is to seed the selection with a
         % whole category and then hand-tune it.
-        set(lst, 'Value', union(get(lst, 'Value'), find(classOfItem == get(popClass, 'Value'))));
+        set(lst, 'Value', union(get(lst, 'Value'), find(groupMask(:, get(popClass, 'Value')))));
     end
 
     function onClassRemove()
-        set(lst, 'Value', setdiff(get(lst, 'Value'), find(classOfItem == get(popClass, 'Value'))));
+        set(lst, 'Value', setdiff(get(lst, 'Value'), find(groupMask(:, get(popClass, 'Value')))));
     end
 
     function onConfirm()
