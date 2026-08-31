@@ -24,6 +24,11 @@ $deps = @(
     [pscustomobject]@{ Name = 'zapline-plus';     Url = 'https://github.com/MariusKlug/zapline-plus.git';      Branch = $null }
     [pscustomobject]@{ Name = 'bva-io';           Url = 'https://github.com/sccn/bva-io.git';                  Branch = $null }
     [pscustomobject]@{ Name = 'pAMICA';           Url = 'https://github.com/sccn/pAMICA.git';                  Branch = $null }
+    # ICLabel carries matconvnet as a submodule and run_ICL calls into it (vl_setupnn),
+    # so a plain clone gives you a plugin that fails at the inference step. Recurse = $true
+    # both clones with --recurse-submodules and back-fills submodules in an existing clone.
+    [pscustomobject]@{ Name = 'ICLabel';          Url = 'https://github.com/sccn/ICLabel.git';                 Branch = $null; Recurse = $true }
+    [pscustomobject]@{ Name = 'firfilt';          Url = 'https://github.com/sccn/firfilt.git';                 Branch = $null }
     [pscustomobject]@{ Name = 'brainstorm3';      Url = 'https://github.com/brainstorm-tools/brainstorm3.git'; Branch = $null }
     [pscustomobject]@{ Name = 'eeglab';           Url = 'https://github.com/sccn/eeglab.git';                  Branch = $null }
     [pscustomobject]@{ Name = 'eeg-oscillations'; Url = 'https://github.com/SvennoNito/eeg-oscillations.git';  Branch = $null }
@@ -73,15 +78,20 @@ foreach ($dep in $deps) {
 
     if (-not (Test-Path $target)) {
         Write-Host "  Cloning into $target"
-        if ($dep.Branch) {
-            & $git clone --branch $dep.Branch $dep.Url $target
-        }
-        else {
-            & $git clone $dep.Url $target
-        }
+        $cloneArgs = @('clone')
+        if ($dep.Branch)  { $cloneArgs += @('--branch', $dep.Branch) }
+        if ($dep.Recurse) { $cloneArgs += '--recurse-submodules' }
+        & $git @cloneArgs $dep.Url $target
     }
     elseif (Test-Path (Join-Path $target '.git')) {
         Write-Host "  Already present as a git repo - leaving contents untouched."
+        # Exception to "untouched": submodules that are still empty. Filling them in only
+        # adds files the clone was always meant to have, and without them the plugin is
+        # broken in a way that surfaces late, deep inside a run.
+        if ($dep.Recurse) {
+            Write-Host "  Initialising submodules"
+            & $git -C $target submodule update --init --recursive
+        }
     }
     else {
         Write-Warning "  '$target' exists but is not a git repository. Skipping - resolve manually if you want it tracked (e.g. rename it aside and re-run)."
