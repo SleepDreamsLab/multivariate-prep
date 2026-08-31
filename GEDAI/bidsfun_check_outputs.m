@@ -204,8 +204,9 @@ if opts.refresh && ~isempty(missList)
 end
 
 %%% ---- Table / optional CSV ----
+%%% Same columns as the printed matrix - one representative file per stage.
 statusMat = cell2mat(cellfun(@(r) r.status, rows, 'uni', 0));
-T = array2table(statusMat, 'VariableNames', matlab.lang.makeValidName(colLabels));
+T = array2table(statusMat(:, showIdx), 'VariableNames', matlab.lang.makeValidName(colLabels(showIdx)));
 T = addvars(T, string(cellfun(@(r) r.fileID, rows, 'uni', 0)), 'Before', 1, 'NewVariableNames', 'fileID');
 if ~isempty(opts.csvout)
     writetable(T, opts.csvout);
