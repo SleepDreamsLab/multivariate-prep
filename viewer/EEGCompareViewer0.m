@@ -16,10 +16,11 @@ file2       = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\ra
 % file2       = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\rawdata\derivatives\prep-ged\sub-drop0001\ses-t1\sub-drop0001_ses-t1_task-sleep_run-01_desc-zc2gedWakeBBAutoFSAutoPlusN2N3REMFSAutoMinus_eeg.set';   % second EEG file
 scoringFile = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\derivatives\scores\final\sub-drop0001_ses-t1_task-sleep_run-01_eeg.csv';                         % sleep scoring file, '' if none
 
-file1       = '\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\rawdata\derivatives\prep-ged-znoise4\sub-drop0001\ses-t1\sub-drop0001_ses-t1_task-sleep_run-01_desc-zc_eeg.set';   % first EEG file
-file2       ='\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop\rawdata\derivatives\prep-ged-znoise4\sub-drop0001\ses-t1\sub-drop0001_ses-t1_task-sleep_run-01_desc-zcged_eeg.set';   % first EEG file
+scoringFile = '\\vs03.herseninstituut.knaw.nl\VS03-SandD-4\DreamModulation\Data_collection\derivatives\scoring\scores\Manual_Checked\sub-DM02_ses-W1_task-sleep_desc-manualchecked.json'
+file1       = '\\vs03.herseninstituut.knaw.nl\VS03-SandD-4\DreamModulation\Data_collection\derivatives\prep-ged-ica\sub-DM02\ses-W1\sub-DM02_ses-W1_task-sleep_acq-250Hz_desc-zcSig3Frq50chunk0Win8_eeg.set';   % first EEG file
+file2       ='\\vs03.herseninstituut.knaw.nl\VS03-SandD-4\DreamModulation\Data_collection\derivatives\prep-ged-ica\sub-DM02\ses-W1\sub-DM02_ses-W1_task-sleep_acq-250Hz_desc-zcSig3Frq50chunk0Win8ged_eeg.set';   % first EEG file
 
-net = 'EGI256'; % net type, passed to chans1020
+net = 'EGI128'; % net type, passed to chans1020
 plotDecimation = 5; % only plot every Nth sample (display only; does not affect underlying data)
 
 % Set file2 = '' to open file1 on its own. Worth doing when file1 carries an
