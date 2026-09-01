@@ -21,14 +21,14 @@ function [failures, GEDs] = bidsfun_subcomp(BIDS, opts)
 %
 %   Sleep-stage selection
 %   ----------------------
-%   The recording is cut into epochlength-second epochs and matched against the
-%   sleep scoring, exactly the epoching step in GEDAI_StageSpecific - but nothing
-%   here dilates stage runs into neighbouring epochs (gedai.dilateStages) or
-%   reassigns N1 to a neighbour (gedai.killN1): the scoring digits are used as
-%   read, unmodified. Only epochs whose stage is in keepTheseStages survive;
-%   the rest are dropped and the survivors are flattened back into one continuous
-%   recording before being handed to ged() (a GED needs one contiguous time series
-%   to segment into covariance windows, not a stack of disjoint epochs).
+%   Done by extractSleepEpochs (qol/), which cuts the recording into
+%   epochlength-second epochs, matches them against the sleep scoring and keeps
+%   only the epochs whose stage is in keepTheseStages. The survivors are
+%   flattened back into one continuous recording before being handed to ged()
+%   (a GED needs one contiguous time series to segment into covariance windows,
+%   not a stack of disjoint epochs). See that function for the details - notably
+%   that the scoring digits are used exactly as read, with no stage dilation or
+%   N1 reassignment.
 %
 %   Name-value, all optional:
 %     derivfolder                     derivatives subfolder for the inputs ('prep-ged')
@@ -148,43 +148,12 @@ for ifile = 1:numel(filesEEG)
         fprintf('Scoring -> %s\n', scoringFile)
         scoringDigits = scoreloader(scoringFile);
 
-        %%% Correct scoring length if needed - the scoring can run a few epochs
-        %%% longer than the recording it was scored from.
-        nEpochs = floor(EEG.pnts / (opts.epochlength * EEG.srate));
-        while numel(scoringDigits) > nEpochs, scoringDigits(end) = []; end
-
-        %%% Epoch into fixed-length sleep epochs, same as GEDAI_StageSpecific: strip
-        %%% boundary/epoch events first, since eeg_regepochs silently drops epochs
-        %%% that overlap one, which would desync the epochs from scoringDigits.
-        if ~isempty(EEG.event)
-            EEG.event(strcmpi({EEG.event.type}, 'boundary')) = [];
-            EEG.event(contains({EEG.event.type}, 'Epoch')) = [];
-            EEG = eeg_checkset(EEG);
-        end
-        EEG = eeg_regepochs(EEG, 'recurrence', opts.epochlength, ...
-            'limits', [0 opts.epochlength], 'eventtype', sprintf('Epoch%ds', opts.epochlength));
-
-        if numel(scoringDigits) ~= EEG.trials
-            error('bidsfun_subcomp:scoringMismatch', ...
-                'Scoring has %d epoch(s) but the recording has %d %ds-epoch(s).', ...
-                numel(scoringDigits), EEG.trials, opts.epochlength);
-        end
-
-        %%% Keep only the requested stages - no dilation, no N1 reassignment: the
-        %%% scoring digits are used exactly as read.
-        keepIdx = find(ismember(scoringDigits, opts.keepTheseStages));
-        if isempty(keepIdx)
-            error('bidsfun_subcomp:noStageEpochs', ...
-                'No epochs match keepTheseStages = [%s].', num2str(opts.keepTheseStages));
-        end
-        fprintf('Keeping %d/%d epochs (stages [%s])\n', ...
-            numel(keepIdx), numel(scoringDigits), num2str(opts.keepTheseStages));
-        EEG = pop_select(EEG, 'trial', keepIdx);
-
-        %%% Flatten back to one continuous recording - ged() segments a continuous
-        %%% time series into its own covariance windows, it does not take a stack
-        %%% of disjoint epochs.
-        EEG = eeg_epoch2continuous(EEG);
+        %%% Epoch, match against the scoring and keep the requested stages.
+        %%% 'flatten' stays at its default (true): ged() segments a continuous
+        %%% time series into its own covariance windows, it does not take a
+        %%% stack of disjoint epochs.
+        [EEG, keepIdx] = extractSleepEpochs(EEG, scoringDigits, ...
+            'epochlength', opts.epochlength, 'keepTheseStages', opts.keepTheseStages);
 
         %%% GED on the cleaned, stage-selected recording. Which contrast to run is
         %%% the caller's decision (gedargs) - it is the choice that determines what

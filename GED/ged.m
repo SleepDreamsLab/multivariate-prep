@@ -226,6 +226,9 @@ end
 %%% pooled matrix is what makes outlier cleaning, permutation testing and
 %%% cross-validation possible further down (3.3, 2.4).
 segsamples = max(2, round(opts.segdur * srate));
+if opts.verbose
+    fprintf('Building S and R covariance matrices...\n');
+end
 switch opts.contrast
     case 'spectral'
         checkcyclesperseg(opts, srate, ntrials, npnts, segsamples);
@@ -342,6 +345,9 @@ end
 Rreg = shrink(R, opts.shrinkage);
 
 %% ----------------------------------------------------------------- the solve
+if opts.verbose
+    fprintf('Solving generalized eigendecomposition (%d x %d)...\n', size(S, 1), size(S, 1));
+end
 [W, L] = eig(S, Rreg);
 evals  = diag(L);
 
@@ -710,12 +716,22 @@ pool = cat(3, covS, covR);
 nS   = size(covS, 3);
 nAll = size(pool, 3);
 
+if opts.verbose
+    fprintf('Running %d permutations', opts.nperm);
+end
+progressstep = max(1, round(opts.nperm / 10));
 maxnull = zeros(opts.nperm, 1);
 for p = 1:opts.nperm
     shuffled = randperm(nAll);
     Sp = V' * normalisecov(mean(pool(:, :, shuffled(1:nS)),       3), opts.covnorm) * V;
     Rp = V' * normalisecov(mean(pool(:, :, shuffled(nS + 1:end)), 3), opts.covnorm) * V;
     maxnull(p) = max(real(eig(Sp, shrink(Rp, opts.shrinkage))));
+    if opts.verbose && (mod(p, progressstep) == 0 || p == opts.nperm)
+        fprintf(' %d%%', round(100 * p / opts.nperm));
+    end
+end
+if opts.verbose
+    fprintf('\n');
 end
 
 %%% The observed eigenvalues are recomputed here in exactly the same way, so that
@@ -747,6 +763,9 @@ lambda  = nan(ncomps, k);
 mapcorr = nan(ncomps, k);
 
 for f = 1:k
+    if opts.verbose
+        fprintf('  Cross-validation fold %d/%d...\n', f, k);
+    end
     Str = normalisecov(mean(covS(:, :, foldS ~= f), 3), opts.covnorm);
     Rtr = normalisecov(mean(covR(:, :, foldR ~= f), 3), opts.covnorm);
     Ste = normalisecov(mean(covS(:, :, foldS == f), 3), opts.covnorm);
