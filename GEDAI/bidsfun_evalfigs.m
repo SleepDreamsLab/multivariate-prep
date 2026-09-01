@@ -70,6 +70,15 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %   -----
 %   epochlength       Epoch duration in seconds. Default: 30.
 %
+%   Figures
+%   -------
+%   backgroundfigs    Draw every figure off-screen: they are still created, printed and
+%                     saved exactly as before, they just never appear on screen. Worth
+%                     setting for a long batch, or on a machine you are using for
+%                     something else while it runs - hundreds of figures popping up and
+%                     stealing focus is the only thing this changes. They cannot be
+%                     inspected interactively while off-screen. Default: false.
+%
 %   Plots (forwarded to run.eval_clean)
 %   ------------------------------------
 %   All default true except PlotTopoBandPower, PlotEpochOverlay,
@@ -117,7 +126,10 @@ arguments
     %--- Epoch ---
     opts.epochlength (1,1) double = 30
     opts.epochstoplot             = []
-    
+
+    %--- Figures ---
+    opts.backgroundfigs (1,1) logical = false
+
 
     %--- Plots (forwarded to run.eval_clean) ---
     opts.PlotCharacteristics  (1,1) logical = true
@@ -137,6 +149,20 @@ fprintf('\n=== Running bidsfun_evalfigs ===\n');
 if isempty(opts.derivpath), opts.derivpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.figpath),      opts.figpath      = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
 if isempty(opts.lockpath),     opts.lockpath     = fullfile(opts.figpath, '.locks'); end
+
+%%% Draw off-screen, when asked. Set on the root's factory default rather than on each
+%%% figure, so it covers every figure the plot functions and EEGLAB's topoplot create
+%%% without any of them needing to know about it. print() renders an invisible figure
+%%% exactly like a visible one, so the saved PNGs are identical either way; only the
+%%% popping-up changes. The onCleanup puts the previous default back on every exit path,
+%%% error and Ctrl-C included - this is global state, and leaving MATLAB in a mode where
+%%% no figure ever shows again would be a nasty thing to hand back to the user.
+if opts.backgroundfigs
+    prevFigVisible  = get(groot, 'DefaultFigureVisible');
+    restoreFigVisible = onCleanup(@() set(groot, 'DefaultFigureVisible', prevFigVisible));
+    set(groot, 'DefaultFigureVisible', 'off');
+    fprintf('Drawing figures off-screen (backgroundfigs=true).\n');
+end
 
 %%% Query raw EEG files from BIDS
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
