@@ -3,7 +3,7 @@ clearvars
 clc; close all
 
 %%% Dependancies
-run('dependancies.m')
+run(['..' filesep 'dependancies.m'])
 
 %%% Define home path
 home = '\\vs03.herseninstituut.knaw.nl' % windows
@@ -35,8 +35,8 @@ geddesc     = 'hpzcged'; % ged: gedai
 icadesc     = 'pamica';  % run-pamica.py's OUT_DESC, i.e. the desc on its *_ica.mat
 
 % Subejct and Session filter
-subjects    = {'sub-drop0001', 'sub-drop0002', 'sub-drop0003'};   % {'sub-drop0001', '...'} or {} to run on all subjects
-sessions    = {'ses-t1', 'ses-t2', 'ses-t3', 'ses-t4', 'ses-t5'}; % {'ses-t1', '...'} or {} to run on all sessions
+subjects    = {};   % {'sub-drop0001', '...'} or {} to run on all subjects
+sessions    = {};   % {'ses-t1', '...'} or {} to run on all sessions
 
 
 
@@ -54,7 +54,7 @@ defauls = namedargs2cell(defauls);
 
 % %%% Step #0 -> Build leadfield matrices
 % build_leadfield_bids(BIDS, 'ProtocolName', 'DROP_Leadfields2', 'ForceReprocess', refresh, ...
-%     'QCDir', fullfile(BIDS.pth, 'derivatives\leadfields\figures\electrode-headmodel-fit'))
+%     'SubjectFilter', subjects, 'QCDir', fullfile(BIDS.pth, 'derivatives\leadfields\figures\electrode-headmodel-fit'))
 
 %%% Step #1 -> Detect flat and bad channels
 fails.badchan = bidsfun_detect_badchans(BIDS, defauls{:}, ...
@@ -109,32 +109,10 @@ fails.eval = bidsfun_evalfigs(BIDS, defauls{:}, ...
     'scoringpath', scoringpath, ...
     'afterdesc', geddesc);
 
-%%% Step #4 -> ICLabel the AMICA decomposition from run-pamica.py
-%%% NOTE: run-pamica.py can now do this itself (RUN_ICLABEL, via mne-icalabel) and
-%%% writes the same _iclabels.tsv schema to the same path. Run one or the other, not
-%%% both - whichever finishes last wins. This one is the canonical EEGLAB ICLabel;
-%%% the Python one saves a machine hop and the EEGLAB/matconvnet dependency chain.
-%%% Reads the geddesc .set plus <fileID>_desc-<icadesc>_ica.mat and writes the
-%%% component labels plus the decomposition in this EEG's channel space. That pair is
-%%% all pop_subcomp needs - it recomputes the activations from those matrices - so the
-%%% activations themselves are not written ('actformat' defaults to 'none').
-%%% run-pamica.py is on another machine, so recordings whose _ica.mat has not landed
-%%% yet are skipped and picked up on the next pass.
-fails.iclabel = bidsfun_iclabel(BIDS, defauls{:}, ...
-    'inputdesc', geddesc, ...
-    'icadesc', icadesc, ...
-    'artefactthreshold', 0.5, ...
-    'iclabelclasses', [2 3 4 5 6], ...
-    'iclabelminutes', 60, ...   % override: default is now 0 (whole night), but DROP's ~236-comp
-                                 % 8-h nights OOM on that (see bidsfun_iclabel.m); 60-s chunks spread across it
-    'plottopo', true);
-
-
-
-% %%% Sleep oscis
-% fails.gedai = run_sleeposci_bids(BIDS, defauls{:}, ...
-%     'RunMode', 'StageSpecific', ...
-%     'geddesc', 'zc2ged2sleeposci', ...
-%     'inputdesc', 'zc2gedWakeBBAutoMinusFSAutoPlus', ...
-%     'scoringpath', scoringpath ...
-%     );
+%%% Output check
+out = bidsfun_check_outputs(BIDS, defauls{:}, ...
+    'badchandesc', badchandesc, ...
+    'filtdesc', filtdesc, ...
+    'geddesc', geddesc, ...
+    'icadesc', icadesc ...
+    );
