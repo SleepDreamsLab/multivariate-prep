@@ -153,7 +153,7 @@ for p = 1:numel(uNames)
         % Force-reprocessing an already-warped subject: reset the anatomy back
         % to the template so bst_warp_prepare starts from unscaled surfaces.
         fprintf('[reset] %s: resetting anatomy to template before re-warp\n', subjectName);
-        db_set_template(iSubjectPre, sTemplates(iTemplate), 1);
+        db_set_template(iSubjectPre, sTemplates(iTemplate), 0);   % 0 = non-interactive: skip the java_dialog confirm that hangs in nogui
         db_save();
     end
 
