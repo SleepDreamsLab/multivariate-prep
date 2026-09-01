@@ -3,24 +3,43 @@ function [failures, GEDs] = bidsfun_subcomp(BIDS, opts)
 %
 %   Per recording: load the bidsfun_gedai .set and the run-pamica.py _ica.mat,
 %   attach the decomposition (loadica), subtract the components flagged as artefact
-%   with pop_subcomp, and hand the cleaned recording to ged() - the generalized
-%   eigendecomposition (see GED/ged.m). Nothing is written to disk: the GED results
-%   are returned so the caller can inspect them and decide what is worth keeping.
+%   with pop_subcomp, restrict the recording to the requested sleep stages, and
+%   hand the result to ged() - the generalized eigendecomposition (see GED/ged.m).
+%   Nothing is written to disk: the GED results are returned so the caller can
+%   inspect them and decide what is worth keeping.
 %
 %   Reads   <inputpath>/<sub>/<ses>/<fileID>_desc-<inputdesc>_eeg<inputfileext>
 %           <icapath>/<sub>/<ses>/<fileID>_desc-<icadesc>_ica.mat   (+ _iclabels.tsv)
+%           <scoringpath>/**/*.xml|*.json|*.csv                    (see scoreloader)
 %   Writes  nothing.
 %
 %   The flags come from the _iclabels.tsv `status` column when preferstatus is true
 %   (the default - that is the file meant to be hand-screened), otherwise from the
-%   .mat's gcompreject; see loadica. A missing input is "not ready yet" (skipped,
-%   not an error), so run-pamica.py can still be writing it on another machine.
+%   .mat's gcompreject; see loadica. A missing EEG/ICA input is "not ready yet"
+%   (skipped, not an error), so run-pamica.py can still be writing it on another
+%   machine. A missing scoring match is an error, caught and logged like any other.
+%
+%   Sleep-stage selection
+%   ----------------------
+%   The recording is cut into epochlength-second epochs and matched against the
+%   sleep scoring, exactly the epoching step in GEDAI_StageSpecific - but nothing
+%   here dilates stage runs into neighbouring epochs (gedai.dilateStages) or
+%   reassigns N1 to a neighbour (gedai.killN1): the scoring digits are used as
+%   read, unmodified. Only epochs whose stage is in keepTheseStages survive;
+%   the rest are dropped and the survivors are flattened back into one continuous
+%   recording before being handed to ged() (a GED needs one contiguous time series
+%   to segment into covariance windows, not a stack of disjoint epochs).
 %
 %   Name-value, all optional:
 %     derivfolder                     derivatives subfolder for the inputs ('prep-ged')
 %     inputpath/inputdesc/inputfileext   the EEG          ('' -> deriv, 'filt2ged', '.set')
 %     icapath/icadesc                     the _ica.mat    ('' -> inputpath, 'pamica')
 %     preferstatus                    obey the .tsv status column over gcompreject   (true)
+%     scoringpath                     directory of sleep-scoring files
+%                                     ('' -> <BIDS root>/derivatives/scoring/scores/Manual_Checked)
+%     epochlength                     sleep-epoch length in seconds                  (30)
+%     keepTheseStages                 stage digits to keep: -3 N3, -2 N2, -1 N1, 0 Wake,
+%                                     1 REM. Default keeps everything: [-3 -2 -1 0 1].
 %     gedargs                         name-value cell forwarded to ged(), e.g.
 %                                     {'contrast','spectral','peakfreq',13.5,'fwhm',2}
 %                                     ({} -> ged's own defaults: a 10 Hz spectral
@@ -29,15 +48,18 @@ function [failures, GEDs] = bidsfun_subcomp(BIDS, opts)
 %
 %   Outputs:
 %     failures   cell of structs, one per recording that errored
-%     GEDs       struct array with fields fileID, removed (the subtracted ICs) and
-%                ged (the struct ged() returned)
+%     GEDs       struct array with fields fileID, removed (the subtracted ICs),
+%                keptepochs (indices, into the pre-selection epoching, that survived
+%                the stage filter) and ged (the struct ged() returned)
 %
 % Methods section:
 %
 % The independent components classified as artefact (see bidsfun_iclabel /
 % run-pamica.py) were removed by subtracting their back-projection from the sensor
-% data. The cleaned recordings then entered a generalized eigendecomposition
-% (Cohen, 2022) to derive spatial filters maximising the contrast of interest.
+% data. The recording was then restricted to <keepTheseStages> sleep stages (30-s
+% scoring epochs), and the cleaned, stage-selected data entered a generalized
+% eigendecomposition (Cohen, 2022) to derive spatial filters maximising the
+% contrast of interest.
 
 arguments
     BIDS
@@ -48,6 +70,9 @@ arguments
     opts.icapath       char = ''
     opts.icadesc       char = 'pamica'
     opts.preferstatus (1,1) logical = true
+    opts.scoringpath   char = ''
+    opts.epochlength  (1,1) double {mustBePositive} = 30
+    opts.keepTheseStages (1,:) double = [-3 -2 -1 0 1]
     opts.gedargs       cell = {}
     opts.tasklabel          = {'Sleep', 'sleep'}
     opts.acqlabel      char = ''
@@ -57,8 +82,9 @@ end
 
 fprintf('\n=== Running bidsfun_subcomp ===\n');
 
-if isempty(opts.inputpath), opts.inputpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
-if isempty(opts.icapath),   opts.icapath   = opts.inputpath; end
+if isempty(opts.inputpath),   opts.inputpath   = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
+if isempty(opts.icapath),     opts.icapath     = opts.inputpath; end
+if isempty(opts.scoringpath), opts.scoringpath = fullfile(BIDS.pth, 'derivatives', 'scoring', 'scores', 'Manual_Checked'); end
 
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
     'task', opts.tasklabel, 'acq', opts.acqlabel);
@@ -66,8 +92,13 @@ if isempty(filesEEG)
     error('bidsfun_subcomp:noFiles', 'No matching EEG files found in BIDS layout.');
 end
 
+%%% Scoring files, collected once - matched per recording below (as in bidsfun_gedai).
+if ~isempty(opts.scoringpath)
+    scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
+end
+
 failures = {};
-GEDs     = struct('fileID', {}, 'removed', {}, 'ged', {});
+GEDs     = struct('fileID', {}, 'removed', {}, 'keptepochs', {}, 'ged', {});
 for ifile = 1:numel(filesEEG)
     p      = bids.internal.parse_filename(filesEEG{ifile});
     fileID = strjoin(cellfun(@(k) [k '-' p.entities.(k)], fieldnames(p.entities), 'uni', 0), '_');
@@ -104,11 +135,63 @@ for ifile = 1:numel(filesEEG)
         EEG.etc.ic_subtraction = struct('icaFile', icaFile, 'removed', badComps);
         [EEG.icaweights, EEG.icasphere, EEG.icawinv, EEG.icachansind, EEG.icaact] = deal([]);
 
-        %%% GED on the cleaned recording. Which contrast to run is the caller's
-        %%% decision (gedargs) - it is the choice that determines what the spatial
-        %%% filters end up isolating.
+        %%% Sleep scoring, matched the same way as bidsfun_gedai.
+        if isempty(opts.scoringpath)
+            scoringfilesHere = gedai.collectScoringFiles(fullfile(BIDS.pth, subDir));
+        else
+            scoringfilesHere = scoringfiles;
+        end
+        scoringFile = gedai.matchScoringFile(p.entities, scoringfilesHere);
+        if isempty(scoringFile)
+            error('bidsfun_subcomp:noScoring', 'No scoring file matched for %s.', fileID);
+        end
+        fprintf('Scoring -> %s\n', scoringFile)
+        scoringDigits = scoreloader(scoringFile);
+
+        %%% Correct scoring length if needed - the scoring can run a few epochs
+        %%% longer than the recording it was scored from.
+        nEpochs = floor(EEG.pnts / (opts.epochlength * EEG.srate));
+        while numel(scoringDigits) > nEpochs, scoringDigits(end) = []; end
+
+        %%% Epoch into fixed-length sleep epochs, same as GEDAI_StageSpecific: strip
+        %%% boundary/epoch events first, since eeg_regepochs silently drops epochs
+        %%% that overlap one, which would desync the epochs from scoringDigits.
+        if ~isempty(EEG.event)
+            EEG.event(strcmpi({EEG.event.type}, 'boundary')) = [];
+            EEG.event(contains({EEG.event.type}, 'Epoch')) = [];
+            EEG = eeg_checkset(EEG);
+        end
+        EEG = eeg_regepochs(EEG, 'recurrence', opts.epochlength, ...
+            'limits', [0 opts.epochlength], 'eventtype', sprintf('Epoch%ds', opts.epochlength));
+
+        if numel(scoringDigits) ~= EEG.trials
+            error('bidsfun_subcomp:scoringMismatch', ...
+                'Scoring has %d epoch(s) but the recording has %d %ds-epoch(s).', ...
+                numel(scoringDigits), EEG.trials, opts.epochlength);
+        end
+
+        %%% Keep only the requested stages - no dilation, no N1 reassignment: the
+        %%% scoring digits are used exactly as read.
+        keepIdx = find(ismember(scoringDigits, opts.keepTheseStages));
+        if isempty(keepIdx)
+            error('bidsfun_subcomp:noStageEpochs', ...
+                'No epochs match keepTheseStages = [%s].', num2str(opts.keepTheseStages));
+        end
+        fprintf('Keeping %d/%d epochs (stages [%s])\n', ...
+            numel(keepIdx), numel(scoringDigits), num2str(opts.keepTheseStages));
+        EEG = pop_select(EEG, 'trial', keepIdx);
+
+        %%% Flatten back to one continuous recording - ged() segments a continuous
+        %%% time series into its own covariance windows, it does not take a stack
+        %%% of disjoint epochs.
+        EEG = eeg_epoch2continuous(EEG);
+
+        %%% GED on the cleaned, stage-selected recording. Which contrast to run is
+        %%% the caller's decision (gedargs) - it is the choice that determines what
+        %%% the spatial filters end up isolating.
         GED = ged(EEG, opts.gedargs{:});
-        GEDs(end+1) = struct('fileID', fileID, 'removed', badComps, 'ged', GED); %#ok<AGROW>
+        GEDs(end+1) = struct('fileID', fileID, 'removed', badComps, ...
+            'keptepochs', keepIdx, 'ged', GED); %#ok<AGROW>
 
     catch ME
         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
