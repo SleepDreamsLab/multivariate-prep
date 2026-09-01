@@ -18,7 +18,10 @@ function build_leadfield_bids(bids, opts)
 %                    derives the search root from bids.pth per study:
 %                      'PM'   — fileparts(bids.pth)/Data_collection/... [VERIFY]
 %                      'DROP' — bids.pth/sourcedata/gps/.../solved/*.sfp,
-%                               then bids.pth/rawdata/<sub>/<ses>/eeg/*.sfp
+%                               then bids.pth/rawdata/<sub>/<ses>/eeg/*.sfp;
+%                               candidates naming a different ses-* are
+%                               rejected, so a session with no file is
+%                               skipped rather than given another's coords
 %                      other  — returns bids.pth/<sub>/<ses>/eeg/ so skip
 %                               messages show where to look
 %                    Supply your own to support a custom folder layout, e.g.:
@@ -226,6 +229,7 @@ for p = 1:numel(uNames)
 
     %% Per-session: compute OpenMEEG head model and report Gain matrix size.
     for s = 1:nSess
+        nRep = reportRowCount();
         bst_process('CallProcess', 'process_headmodel', [], [], ...
             'channelfile', sessChan{s}, ...
             'sourcespace', 1, 'meg', 1, 'eeg', 3, ...
@@ -236,6 +240,15 @@ for p = 1:numel(uNames)
         [sStudyHM, ~] = bst_get('ChannelFile', sessChan{s});
         if isempty(sStudyHM) || isempty(sStudyHM.iHeadModel)
             fprintf('[warn] %s / %s: head model missing after computation\n', subjectName, sessName{s});
+            % process_headmodel reports its reason to the Brainstorm report and
+            % returns silently; echo it so the console says why it gave up.
+            msgs = reportMessagesSince(nRep);
+            for m = 1:numel(msgs)
+                fprintf('        %s\n', msgs{m});
+            end
+            if isempty(msgs)
+                fprintf('        (no error recorded in the Brainstorm report)\n');
+            end
             continue;
         end
         headModelFile = sStudyHM.HeadModel(sStudyHM.iHeadModel).FileName;
@@ -250,6 +263,39 @@ bst_report('Export', reportFile, fullfile(pwd, 'leadfield_bids_report.html'));
 fprintf('Done. Report: %s\n', fullfile(pwd, 'leadfield_bids_report.html'));
 end
 
+
+% -------------------------------------------------------------------------
+function n = reportRowCount()
+% Current number of entries in the running Brainstorm process report.
+global GlobalData
+n = 0;
+try
+    n = size(GlobalData.ProcessReports.Reports, 1);
+catch
+end
+end
+
+% -------------------------------------------------------------------------
+function msgs = reportMessagesSince(nBefore)
+% Error/warning messages appended to the Brainstorm process report after row
+% nBefore. Column 1 is the entry type, column 4 the message text.
+global GlobalData
+msgs = {};
+try
+    R = GlobalData.ProcessReports.Reports;
+catch
+    return;
+end
+if isempty(R) || size(R, 2) < 4
+    return;
+end
+for i = (nBefore + 1):size(R, 1)
+    if any(strcmpi(R{i,1}, {'error', 'warning'}))
+        txt = strtrim(strrep(char(R{i,4}), char(10), ' | '));
+        msgs{end+1} = sprintf('%s: %s', upper(char(R{i,1})), txt);   %#ok<AGROW>
+    end
+end
+end
 
 % -------------------------------------------------------------------------
 function sfp = bidsToSfp(bidsPath, subjectName, sessName, studyId)
@@ -296,16 +342,33 @@ function sfp = sfpFromDrop(bidsPath, subjectName, sessName)
     solvedDir = fullfile(bidsPath, '..', 'sourcedata', 'gps', subjectName, 'solved');
     sessPat = ['*' sessName '*domesolved*.sfp'];
     d = dir(fullfile(solvedDir, sessPat));
-    if isempty(d), d = dir(fullfile(solvedDir, '*.sfp')); end
+    if isempty(d), d = dropForeignSessions(dir(fullfile(solvedDir, '*.sfp')), sessName); end
     if ~isempty(d)
         sfp = fullfile(d(1).folder, d(1).name);
         return;
     end
     eegDir = fullfile(bidsPath, 'rawdata', subjectName, sessName, 'eeg');
-    d = dir(fullfile(eegDir, '*.sfp'));
+    d = dropForeignSessions(dir(fullfile(eegDir, '*.sfp')), sessName);
     if ~isempty(d)
         sfp = fullfile(d(1).folder, d(1).name);
     else
         sfp = '';
     end
+end
+
+% -------------------------------------------------------------------------
+function d = dropForeignSessions(d, sessName)
+% Remove candidates whose filename carries a ses-* token for a *different*
+% session. Files with no session token are kept: some layouts store a single
+% .sfp per subject. Without this filter the wildcard fallback silently hands
+% a session whichever .sfp dir() happened to list first, which can be another
+% session's electrode positions.
+    keep = true(size(d));
+    for i = 1:numel(d)
+        tok = regexp(d(i).name, 'ses-[A-Za-z0-9]+', 'match');
+        if ~isempty(tok) && ~any(strcmpi(tok, sessName))
+            keep(i) = false;
+        end
+    end
+    d = d(keep);
 end
