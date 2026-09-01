@@ -117,7 +117,9 @@ function GED = ged(data, opts)
 %                 held-out fold. Default: 0 (off).
 %   plot          Draw the diagnostic figure - eigenspectrum, maps and component
 %                 spectra for the first components (3.7, Fig. 4). Always look at
-%                 this before trusting the top component. Default: false.
+%                 this before trusting the top component. Default: false. Call
+%                 plotged(GED) to draw it again later, e.g. for a GED struct
+%                 stored by bidsfun_subcomp, which never plots on its own.
 %   verbose       Print a summary. Default: true.
 %
 %   Output
@@ -464,7 +466,7 @@ if opts.verbose
 end
 
 if opts.plot
-    plotdiagnostics(GED, srate, ncomps);
+    plotged(GED, 'ncomps', ncomps);
 end
 end
 
@@ -791,64 +793,5 @@ hi  = min(max(ceil(pos),  1), n);
 v   = x(lo) + (pos - floor(pos)) * (x(hi) - x(lo));
 end
 
-% -------------------------------------------------------------------------
-function plotdiagnostics(GED, srate, ncomps)
-% The figure to look at before picking a component (3.7, Fig. 4): eigenspectrum,
-% component maps, and the spectrum of each component time series.
-
-nshow = min(ncomps, 5);
-figure('Color', 'w', 'Name', 'GED diagnostics', 'NumberTitle', 'off');
-tiledlayout(3, nshow, 'TileSpacing', 'compact', 'Padding', 'compact');
-
-%%% Eigenspectrum. The elbow says how many directions actually separate S from R;
-%%% the dashed line is the permutation threshold, when one was computed.
-nexttile([1 nshow]);
-nspec = min(numel(GED.evals), 20);
-plot(1:nspec, GED.evals(1:nspec), 'ks-', 'MarkerFaceColor', 'k'); hold on
-if ~isnan(GED.perm.crit95)
-    yline(GED.perm.crit95, 'r--', 'p < .05');
-end
-xlabel('Component'); ylabel('\lambda (S:R ratio)'); title('Eigenspectrum'); box off
-
-hastopo = exist('topoplot', 'file') == 2 && ~isempty(GED.info.chanlocs);
-for c = 1:nshow
-    nexttile;
-    if hastopo
-        topoplot(GED.maps(:, c), GED.info.chanlocs, 'electrodes', 'off', 'numcontour', 0);
-    else
-        bar(GED.maps(:, c), 'k'); axis tight; box off
-    end
-    title(sprintf('#%d, \\lambda = %.2f', c, GED.evals(c)));
-end
-
-for c = 1:nshow
-    nexttile;
-    [pxx, hz] = compspectrum(GED.comp(c, :), srate);
-    plot(hz, 10 * log10(pxx), 'k'); xlim([0 min(45, srate / 2)]);
-    xlabel('Hz');
-    if c == 1, ylabel('Power (dB)'); end
-    box off
-end
-end
-
-function [pxx, hz] = compspectrum(x, srate)
-% Welch spectrum of a component time series, with a plain-MATLAB fallback for
-% installations without the Signal Processing Toolbox.
-
-x   = x(:);
-win = min(numel(x), round(4 * srate));
-if exist('pwelch', 'file') == 2
-    [pxx, hz] = pwelch(x, hann(win), [], [], srate);
-    return
-end
-nseg  = max(1, floor(numel(x) / win));
-taper = 0.5 - 0.5 * cos(2 * pi * (0:win - 1)' / win);
-pxx   = zeros(floor(win / 2) + 1, 1);
-for s = 1:nseg
-    seg = x((s - 1) * win + (1:win)) .* taper;
-    amp = abs(fft(seg)).^2;
-    pxx = pxx + amp(1:floor(win / 2) + 1);
-end
-pxx = pxx / (nseg * srate * sum(taper.^2));
-hz  = linspace(0, srate / 2, numel(pxx))';
-end
+%%% The diagnostic figure itself lives in plotged.m, so it can be called again
+%%% later on any stored GED struct (ged.m calls it above when 'plot' is true).
