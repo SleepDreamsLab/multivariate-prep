@@ -229,6 +229,27 @@ for p = 1:numel(uNames)
 
     %% Per-session: compute OpenMEEG head model and report Gain matrix size.
     for s = 1:nSess
+        % The BEM surfaces were just rebuilt, so any head model still sitting in
+        % this folder is stale. Brainstorm never overwrites — bst_headmodeler
+        % passes the output name through file_unique — so leaving the old file
+        % in place yields headmodel_surf_openmeeg_02.mat, _03.mat, ... Delete
+        % first so the recomputed model lands on the canonical filename.
+        [sStudyOld, iStudyOld] = bst_get('ChannelFile', sessChan{s});
+        if ~isempty(iStudyOld) && ~isempty(sStudyOld) && ~isempty(sStudyOld.HeadModel)
+            for h = 1:numel(sStudyOld.HeadModel)
+                oldFile = file_fullpath(sStudyOld.HeadModel(h).FileName);
+                if exist(oldFile, 'file')
+                    file_delete(oldFile, 1);
+                end
+            end
+            fprintf('[clean] %s / %s: removed %d stale head model(s)\n', ...
+                subjectName, sessName{s}, numel(sStudyOld.HeadModel));
+            sStudyOld.HeadModel  = repmat(db_template('HeadModel'), 0, 1);
+            sStudyOld.iHeadModel = [];
+            bst_set('Study', iStudyOld, sStudyOld);
+            db_save();
+        end
+
         nRep = reportRowCount();
         bst_process('CallProcess', 'process_headmodel', [], [], ...
             'channelfile', sessChan{s}, ...
