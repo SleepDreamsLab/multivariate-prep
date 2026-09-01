@@ -35,6 +35,25 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %                     Default: <BIDS root>/derivatives/prep-ged/figures
 %   refresh           Force re-run even if cached files exist. Default: false.
 %
+%   Parallel machines
+%   -----------------
+%   Several machines can be pointed at the same BIDS root and the same figpath at once.
+%   Each recording is claimed with a lock file before any work starts, so a second
+%   machine walking the same list skips whatever the first is busy with instead of
+%   duplicating it. The claim is released when the recording finishes, when it errors,
+%   and on Ctrl-C, so a failure never parks a recording permanently. Claims are keyed by
+%   afterdesc, so this stage never blocks a machine evaluating a different desc - or
+%   running a different stage - on the same recording. See claimFile.
+%
+%   uselocks          Claim each recording before processing it. Default: true.
+%                     Set false for a single-machine run over a local figpath.
+%   lockpath          Directory holding the claim files. Default: <figpath>/.locks
+%   lockstalemin      Minutes after which a claim whose heartbeat stopped is taken
+%                     over - the escape hatch for a machine that crashed or was
+%                     rebooted mid-recording. Keep it well above the longest
+%                     plausible single-recording runtime. Default: 360 (6 h).
+%   lockheartbeatmin  Minutes between heartbeat writes on a held claim. Default: 5.
+%
 %   EEG
 %   ---
 %   tasklabel         BIDS task label(s) to query. Default: {'Sleep','sleep'}.
@@ -78,6 +97,12 @@ arguments
     opts.figpath          char = ''
     opts.refresh (1,1)    logical = false
 
+    %--- Parallel machines ---
+    opts.uselocks (1,1) logical = true
+    opts.lockpath         char  = ''
+    opts.lockstalemin     (1,1) double {mustBePositive} = 360
+    opts.lockheartbeatmin (1,1) double {mustBePositive} = 5
+
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
     opts.acqlabel   char         = '125Hz'
@@ -111,6 +136,7 @@ fprintf('\n=== Running bidsfun_evalfigs ===\n');
 
 if isempty(opts.derivpath), opts.derivpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.figpath),      opts.figpath      = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
+if isempty(opts.lockpath),     opts.lockpath     = fullfile(opts.figpath, '.locks'); end
 
 %%% Query raw EEG files from BIDS
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
@@ -148,6 +174,31 @@ for ifile = 1:numel(filesEEG)
     if ~opts.refresh && isfile(pngFile)
         fprintf('[skip] output exists: %s\n', pngFile)
         continue
+    end
+
+    %%% Claim this recording, so a second machine walking the same list moves on to the
+    %%% next one instead of redoing this. The lock file is created with an atomic
+    %%% create-if-absent, so two machines reaching this line together cannot both win.
+    %%% lockGuard holds the claim: it releases on success, on the error caught below, and
+    %%% on Ctrl-C or any error that unwinds out of this function, so a recording is never
+    %%% left claimed by a run that is no longer working on it. Hence the explicit clear at
+    %%% the end of the iteration - the claim must not outlive its recording.
+    lockGuard = [];  %#ok<NASGU> release any claim still held from the previous iteration
+    if opts.uselocks
+        [lockGuard, acquired, holder] = claimFile( ...
+            fullfile(opts.lockpath, [fileID '_desc-' opts.afterdesc '.lock']), ...
+            'stalemin', opts.lockstalemin, 'heartbeatmin', opts.lockheartbeatmin); %#ok<ASGLU>
+        if ~acquired
+            fprintf('[skip] %s: claimed by %s (pid %d) since %s\n', ...
+                fileID, holder.host, holder.pid, holder.started)
+            continue
+        end
+        %%% Re-check now that the claim is ours: the other machine may have finished this
+        %%% recording and dropped its lock between our skip check above and here.
+        if ~opts.refresh && isfile(pngFile)
+            fprintf('[skip] output exists: %s\n', pngFile)
+            continue
+        end
     end
 
     try
@@ -261,6 +312,11 @@ for ifile = 1:numel(filesEEG)
         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
         failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
     end
+
+    %%% Drop the claim, whether the recording succeeded or failed. A failed recording has
+    %%% to become available again - it is exactly the one another machine (or a later run
+    %%% of this one) should be free to retry.
+    clear lockGuard
 end
 
 %%% Failure summary
