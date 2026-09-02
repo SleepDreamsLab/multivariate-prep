@@ -10,16 +10,25 @@ ICLabel (mne-icalabel) over those components.
 The ICLabel pass is deliberately independent of the AMICA fit: it keys off the
 _ica.mat, so a recording whose .mat already exists gets labelled without refitting.
 That matters because a fit is hours on a GPU and a relabel is a minute -- see
-run_iclabel() and RUN_ICLABEL below. The MATLAB equivalent, ICA/bidsfun_iclabel.m,
+run_iclabel() and RUN_ICLABEL below. Independent, but not inconsistent: it re-reads
+the recording and applies that same high-pass itself (ICLABEL_HIGHPASS), so the
+components it labels are the ones the decomposition actually describes, whether the
+fit just ran or ran last week. The MATLAB equivalent, ICA/bidsfun_iclabel.m,
 writes the same _iclabels.tsv schema from the canonical EEGLAB implementation; use
 either, not both, per recording.
+
+A recording that cannot be fitted is recorded and stepped over rather than taking
+the batch with it: see fit_amica() for the retry ladder a diverging fit walks down,
+and FAILURE_LOG for where the ones that still fail are written.
 
 .venv\Scripts\Activate.ps1
 python run-pamica.py
 """
 
+import gc
 import json
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -45,6 +54,12 @@ REFRESH_PAMICA = True  # True = refit and overwrite even if <mat_stem>.mat alrea
                         # (both skip-checks in run_amica() respect this)
 REFRESH_ICLABEL = True  # True = relabel and overwrite even if <stem>_iclabels.tsv already exists
 
+# One recording failing must not take the batch down with it -- a diverging AMICA fit
+# roughly 20 subjects into an overnight run used to abort every recording after it.
+# Failures are collected instead, written here under deriv_out (the same convention as
+# bidsfun_gedai.m's failed_files_gedai.json), and summarised at the end.
+FAILURE_LOG = "failed_files_pamica.json"
+
 DATA_EXTENSIONS = (".set", ".vhdr")  # preference order when both exist for a recording
 
 # Input files can still be getting written by another machine as this script starts.
@@ -61,8 +76,47 @@ MAX_ITER = 700  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
 DO_REJECT = False  # Fortran-style outlier rejection; costs ~2x GPU memory (pamica clones the full array
                    # every iteration under do_reject, core.py:1710) -- OOMs on this recording size/GPU
 DO_NEWTON = True   # Fortran-parity Newton preconditioner (tune newt_start/newtrate via fit() kwargs)
+
+# Retry ladder for a fit that blows up (see fit_amica). Each entry overrides the
+# parameters above for one attempt, tried in order until one produces a finite
+# log likelihood; {} is the configured settings, so the first attempt is exactly
+# what a run without this ladder would do. Everything here reaches pamica as
+# fit() keywords, so any AMICATorchNG constructor argument is fair game.
+#
+# The rungs are ordered by what actually destabilises these fits. Newton first:
+# every divergence seen so far was preceded by a run of "Newton not positive
+# definite" iterations, and the natural-gradient-only path has never diverged.
+# Then a halved learning rate on top of it. If a recording still fails both, the
+# next thing to try by hand is dtype=torch.float64 -- it costs a lot of GPU time
+# on a consumer card (fp64 runs at a fraction of fp32 throughput there) and twice
+# the memory, which is why it is not a rung here.
+FIT_FALLBACKS = (
+    {},
+    {"do_newton": False},
+    {"do_newton": False, "lrate": 0.05},
+)
+
 PASS_FRQ, STOP_FRQ, PASS_RIPPLE, STOP_ATTEN = 1.6, 0.8, 0.05, 30
-RANK_TOL = 1e-7  # rank_projection: eigenvalue-ratio cutoff for the kept subspace
+
+# rank_projection: eigenvalue-ratio cutoff for the kept subspace.
+#
+# Raised from 1e-7 after sub-drop0024_ses-t3 diverged mid-fit. GEDAI leaves some
+# recordings with a direction whose eigenvalue ratio lands just above 1e-7 while
+# every other kept direction sits at 1e-5 -- that night's tail across the cut was
+# "4.5e-05 3.8e-05 2.6e-07", i.e. a near-null direction survived by a factor of
+# ~2.6 and then got scaled up to unit variance by pamica's internal sphering.
+# What follows is a mixture component collapsing onto it a few hundred iterations
+# in: "Newton not positive definite" every iteration, LL falling off a cliff
+# (-1.5 -> -21), "Non-finite mu/beta/alpha", and finally a singular A, which
+# torch.linalg.inv raises on rather than returning garbage. Every night that
+# fitted cleanly kept nothing below ~8e-6, so this drops the pathological
+# directions without touching the rank of a healthy recording.
+#
+# RANK_WARN_FACTOR only prints: it flags a run whose smallest kept direction is
+# still within this factor of the cutoff, i.e. one that only just avoided the
+# same fate and is worth watching if it later misbehaves.
+RANK_TOL = 1e-6
+RANK_WARN_FACTOR = 10.0
 
 # AMICA knobs below are usually left alone -- named here (rather than left as call-site
 # literals) so their values get recorded in amica_runtime.json for provenance.
@@ -106,21 +160,37 @@ ICLABEL_BACKEND = None   # None = mne-icalabel picks: torch if installed, else o
 
 # ICLabel sees this many minutes, as evenly spaced chunks rather than the head of the
 # recording, so every sleep stage contributes in roughly the proportion it occupies.
-# 0 = hand over the whole recording (the default here).
-#
-# Mind the memory if raising this above 0: _eeg_autocorr_welch stacks the activations
-# through a 50%-overlapping 3-s window index in float64, so it transiently needs well
-# over an order of magnitude more than the recording itself -- a 236-component 8-h
-# night at 250 Hz needs on the order of 40 GB there. Set this to e.g. 60 if that OOMs
-# on your machine; both data-derived features (median 1-s PSD, mean 3-s
-# autocorrelation) are window averages and converge well inside an hour.
-ICLABEL_MINUTES = 0
+# 0 = hand over the whole recording, which is the memory-hungry setting, not a cheap
+# one: _eeg_autocorr_welch stacks the activations through a 50%-overlapping 3-s window
+# index in float64, so it transiently needs well over an order of magnitude more than
+# the recording itself -- a 236-component 8-h night at 250 Hz needs on the order of
+# 40 GB there. Both data-derived features (median 1-s PSD, mean 3-s autocorrelation)
+# are window averages and converge well inside an hour, so a bounded subset costs
+# essentially nothing in accuracy. Drop this to e.g. 60 if 180 still OOMs.
+ICLABEL_MINUTES = 180
 ICLABEL_CHUNK_SECONDS = 60
 
 # Marking components bad: top class among these, at or above this probability.
 # Indices are into ICLABEL_CLASSES below (0-based), i.e. everything except brain
 ICLABEL_ARTEFACT_CLASSES = (1, 2, 3, 4, 5, 6)
 ICLABEL_THRESHOLD = 0.0
+
+# Put the ICLabel data through the same Chebyshev-II high-pass the AMICA fit used
+# (PASS_FRQ/STOP_FRQ above). The decomposition is estimated on high-passed data, so
+# without this ICLabel would be describing those components plus the sub-PASS_FRQ
+# drift they were never fitted to -- which on a sleep night is a lot of energy, and
+# lands squarely in ICLabel's autocorrelation feature.
+#
+# Filtered exactly once, either way round: the file on disk stays untouched, run_amica
+# filters its own in-memory copy, and iclabel_subset filters its own. So a recording
+# that was just fitted and one that was skipped as already-done (REFRESH_PAMICA True
+# or False) hand ICLabel the same thing.
+#
+# Note this does NOT silence mne-icalabel's "not filtered between 1 and 100 Hz"
+# warning: that reads info["highpass"]/["lowpass"], which only MNE's own raw.filter()
+# updates, and it wants a 100 Hz low-pass as well. iclabel_subset sets info["highpass"]
+# so the metadata is at least honest about what was done.
+ICLABEL_HIGHPASS = True
 
 # GEDAI average-references before it runs, so the derivative this reads already is
 # common-average even though nothing in the file says so. Declaring it keeps
@@ -256,15 +326,35 @@ def output_paths(data_file, deriv_out, out_desc, stride=None):
     )
 
 
-def highpass(X, sfreq):
-    """Minimum-order Chebyshev-II high-pass, zero phase (= designfilt + filtfilt)."""
+def highpass(X, sfreq, verbose=True):
+    """Minimum-order Chebyshev-II high-pass, zero phase (= designfilt + filtfilt).
+
+    verbose=False for the ICLabel path, which calls this once per chunk and would
+    otherwise print two lines per minute of recording.
+    """
     order, wn = cheb2ord(PASS_FRQ, STOP_FRQ, PASS_RIPPLE, STOP_ATTEN, fs=sfreq)
-    print(f"  high-pass: order {order}, Wn {wn:.4g} (pass {PASS_FRQ} Hz / stop {STOP_FRQ} Hz @ {sfreq} Hz)")
+    if verbose:
+        print(f"  high-pass: order {order}, Wn {wn:.4g} (pass {PASS_FRQ} Hz / stop {STOP_FRQ} Hz @ {sfreq} Hz)")
     sos = cheby2(order, STOP_ATTEN, wn, btype="highpass", output="sos", fs=sfreq)
     t0 = time.perf_counter()
     Xf = sosfiltfilt(sos, X, axis=1)
-    print(f"  high-pass: filtered {X.shape[0]} channels x {X.shape[1]} samples in {time.perf_counter() - t0:.1f} s")
+    if verbose:
+        print(f"  high-pass: filtered {X.shape[0]} channels x {X.shape[1]} samples in {time.perf_counter() - t0:.1f} s")
     return Xf
+
+
+def highpass_inplace(X, sfreq, block=32):
+    """highpass() written back into X a block of channels at a time.
+
+    sosfiltfilt filters each row independently, so this is numerically identical to
+    filtering X in one call -- it just never holds a second copy of the whole array.
+    That matters on the ICLabel path at ICLABEL_MINUTES=0, where X is the entire night
+    (16 GB for 250 channels x 8.2 M samples in float64) and the transient copy would
+    otherwise double it. The extra copy here is `block` channels wide instead.
+    """
+    for c0 in range(0, X.shape[0], block):
+        X[c0:c0 + block] = highpass(X[c0:c0 + block], sfreq, verbose=False)
+    return X
 
 
 def rank_projection(X, tol=RANK_TOL):
@@ -278,6 +368,10 @@ def rank_projection(X, tol=RANK_TOL):
     tail = " ".join(f"{r:.1e}" for r in ratio[max(k - 3, 0):k + 3])
     print(f"  rank {k}/{len(d)} at tol {tol:.0e}; eigenvalue ratios across the cut: {tail}"
           f" ({time.perf_counter() - t0:.1f} s)")
+    if k and ratio[k - 1] < tol * RANK_WARN_FACTOR:
+        print(f"  WARNING: smallest kept direction is at {ratio[k - 1]:.1e}, within "
+              f"{RANK_WARN_FACTOR:g}x of the cutoff -- a near-null direction this close to "
+              f"the cut is what destabilises the fit; raise RANK_TOL if this one diverges")
     return V[:, :k].T
 
 
@@ -293,6 +387,71 @@ def read_raw(data_file, preload=True):
     if data_file.suffix == ".vhdr":
         return mne.io.read_raw_brainvision(data_file, preload=preload)
     raise ValueError(f"unsupported derivative extension: {data_file.suffix} ({data_file})")
+
+
+def free_gpu():
+    """Hand the GPU back between recordings (and between failed fit attempts).
+
+    Dropping the last reference to a model frees the tensors, but torch keeps the
+    blocks in its caching allocator, so the next recording -- a slightly larger one,
+    or a retry at a different dtype -- can OOM against memory nothing is using.
+    """
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def fit_amica(Xr, stem):
+    """Fit AMICA on Xr, retrying with the FIT_FALLBACKS overrides if it blows up.
+
+    A diverging fit does not fail gracefully: a mixture component collapses, mu/beta
+    go non-finite, and the next inv(A) raises torch's LinAlgError -- roughly 20 GPU-
+    minutes in, with nothing written. A fit that instead limps to max_iter with a
+    non-finite likelihood is the same failure without the exception, so it is treated
+    identically here rather than being saved as if it were a decomposition.
+
+    Returns (model, info, elapsed): the fitted AMICA, a dict describing which rung of
+    the ladder produced it (recorded in the json sidecar, so a recording fitted on a
+    fallback is identifiable afterwards), and the wall time of the successful attempt.
+    Raises RuntimeError, chained to the last failure, if every rung fails.
+    """
+    base = dict(max_iter=MAX_ITER, block_size=BLOCK_SIZE, dtype=DTYPE,
+                do_reject=DO_REJECT, do_newton=DO_NEWTON,
+                min_dll=MIN_DLL, maxincs=MAXINCS, use_min_dll=USE_MIN_DLL,
+                use_grad_norm=USE_GRAD_NORM, min_nd=MIN_ND)
+
+    last_exc = None
+    for attempt, overrides in enumerate(FIT_FALLBACKS, start=1):
+        if overrides:
+            print(f"  fit attempt {attempt}/{len(FIT_FALLBACKS)}: retrying with {overrides}")
+        model = AMICA(n_models=N_MODELS, n_mix=N_MIX, device=DEVICE)
+        t0 = time.perf_counter()
+        try:
+            model.fit(Xr, **{**base, **overrides})
+            if not np.isfinite(model.final_ll_):
+                raise RuntimeError(f"fit ended with a non-finite log likelihood "
+                                   f"({model.final_ll_}) -- the fit diverged")
+        except torch.cuda.OutOfMemoryError:
+            # Not something a gentler learning rate fixes: every rung needs the same
+            # memory, so retrying only burns the GPU time again. Raise it as is.
+            del model
+            free_gpu()
+            raise
+        except RuntimeError as exc:
+            print(f"  AMICA fit FAILED after {(time.perf_counter() - t0) / 60:.1f} min "
+                  f"(attempt {attempt}/{len(FIT_FALLBACKS)}): {exc!r}")
+            last_exc = exc
+            del model
+            free_gpu()
+            continue
+        info = {"attempt": attempt,
+                "overrides": {k: str(v) for k, v in overrides.items()}}
+        return model, info, time.perf_counter() - t0
+
+    raise RuntimeError(
+        f"{stem}: AMICA diverged on all {len(FIT_FALLBACKS)} attempt(s) "
+        f"(last: {last_exc!r}) -- nothing written"
+    ) from last_exc
 
 
 def run_amica(data_file, deriv_out):
@@ -350,13 +509,9 @@ def run_amica(data_file, deriv_out):
     if mat_path.is_file():
         print(f"  REFRESH_PAMICA: refitting and overwriting {mat_path.name}")
 
-    model = AMICA(n_models=N_MODELS, n_mix=N_MIX, device=DEVICE)
-    t0 = time.perf_counter()
-    model.fit(Xr, max_iter=MAX_ITER, block_size=BLOCK_SIZE, dtype=DTYPE, do_reject=DO_REJECT, do_newton=DO_NEWTON,
-              min_dll=MIN_DLL, maxincs=MAXINCS, use_min_dll=USE_MIN_DLL,
-              use_grad_norm=USE_GRAD_NORM, min_nd=MIN_ND)
-    elapsed = time.perf_counter() - t0
-    print(f"  AMICA fit took {elapsed / 60:.1f} min ({elapsed:.1f} s)")
+    model, fit_info, elapsed = fit_amica(Xr, data_file.stem)
+    print(f"  AMICA fit took {elapsed / 60:.1f} min ({elapsed:.1f} s); "
+          f"stopped after {len(model.ll_history_)} iter ({model.stop_reason_})")
 
     mat_path.parent.mkdir(parents=True, exist_ok=True)
     # Always written first: byte-identical to the Fortran reference, unaffected by
@@ -452,6 +607,13 @@ def run_amica(data_file, deriv_out):
                     "use_min_dll": USE_MIN_DLL,
                     "use_grad_norm": USE_GRAD_NORM,
                     "min_nd": MIN_ND,
+                    # Which FIT_FALLBACKS rung produced this decomposition: 1 is the
+                    # configured settings, anything higher means the fit diverged and
+                    # these overrides were applied on top.
+                    "fit_attempt": fit_info["attempt"],
+                    "fit_overrides": fit_info["overrides"],
+                    "stop_reason": model.stop_reason_,
+                    "n_iter": len(model.ll_history_),
                 },
                 "ProcessingDurationsMinutes": elapsed / 60,
                 "GeneratedDate": datetime.now().isoformat(),
@@ -518,6 +680,17 @@ def iclabel_subset(data_file, ch_names, minutes, chunk_seconds):
     Returns (raw, minutes_used). minutes <= 0, or a recording shorter than that,
     loads everything. Channels are picked by name, in the order the decomposition
     was fitted with, so raw.ch_names lines up with the columns of icasphere.
+
+    Under ICLABEL_HIGHPASS the data goes through the same high-pass the fit used, so
+    ICLabel sees what the decomposition actually models. This is the only place the
+    ICLabel path filters, and it always reads the unfiltered file, so nothing is ever
+    filtered twice -- and it does not matter whether run_amica fitted this recording a
+    minute ago or skipped it as already-done.
+
+    Each chunk is filtered on its own, BEFORE the pieces are concatenated. Filtering
+    the concatenation would run a zero-phase filter across seams joining parts of the
+    night that are hours apart, smearing each discontinuity into the minutes on both
+    sides of it. See highpass_inplace for why the filtering is written back in place.
     """
     import mne
     from mne.io import RawArray
@@ -530,17 +703,33 @@ def iclabel_subset(data_file, ch_names, minutes, chunk_seconds):
 
     n_want = int(round(minutes * 60 * sfreq))
     if minutes <= 0 or n_want >= n_total:
-        data = raw.get_data(picks=picks)
+        pieces = [raw.get_data(picks=picks)]
     else:
         chunk = min(int(round(chunk_seconds * sfreq)), n_total)
         n_chunk = max(1, n_want // chunk)
         starts = np.unique(np.linspace(0, n_total - chunk, n_chunk).round().astype(int))
-        data = np.hstack([raw.get_data(picks=picks, start=s, stop=s + chunk) for s in starts])
+        pieces = [raw.get_data(picks=picks, start=s, stop=s + chunk) for s in starts]
     del raw
 
-    if ICLABEL_ASSUME_AVGREF:
-        with info._unlock():
+    if ICLABEL_HIGHPASS:
+        t0 = time.perf_counter()
+        for piece in pieces:
+            highpass_inplace(piece, sfreq)
+        print(f"  ICLabel: high-passed {pieces[0].shape[0]} channels in {len(pieces)} chunk(s) "
+              f"at {PASS_FRQ} Hz -- the same filter the fit used "
+              f"({time.perf_counter() - t0:.1f} s)")
+
+    # hstack on a single piece would copy the whole night for nothing.
+    data = pieces[0] if len(pieces) == 1 else np.hstack(pieces)
+    del pieces
+
+    with info._unlock():
+        if ICLABEL_ASSUME_AVGREF:
             info["custom_ref_applied"] = True
+        if ICLABEL_HIGHPASS:
+            # Honest metadata for the array actually being handed over. The file on
+            # disk is unfiltered; this Raw is not.
+            info["highpass"] = float(PASS_FRQ)
     out = RawArray(data, info, verbose="ERROR")
     return out, out.n_times / sfreq / 60
 
@@ -655,6 +844,15 @@ def run_iclabel(mat_path):
                     "MinutesRequested": ICLABEL_MINUTES,
                     "MinutesClassified": round(minutes_used, 2),
                     "AssumedAverageReference": ICLABEL_ASSUME_AVGREF,
+                    "HighpassHz": PASS_FRQ if ICLABEL_HIGHPASS else None,
+                    "HighpassDescription": (
+                        f"Chebyshev-II zero-phase high-pass, {PASS_FRQ} Hz pass / "
+                        f"{STOP_FRQ} Hz stop -- the same filter the AMICA fit used, so "
+                        f"ICLabel sees the data the decomposition was estimated on."
+                        if ICLABEL_HIGHPASS else
+                        "None: ICLabel saw the recording as stored, which is NOT the "
+                        "high-passed data the decomposition was estimated on."
+                    ),
                     "Backend": ICLABEL_BACKEND or "auto",
                     "DurationMinutes": round(elapsed / 60, 3),
                     "GeneratedDate": datetime.now().isoformat(),
@@ -689,6 +887,40 @@ def run_iclabel(mat_path):
     return probs
 
 
+def record_failure(failures, name, stage, exc, deriv_out):
+    """Record one recording's failure and carry on with the next.
+
+    The MATLAB equivalent (bidsfun_gedai.m) keeps fileID/message/report/timestamp per
+    failure and dumps them at the end of the run; the same fields are kept here, but
+    rewritten to disk after every failure rather than only at the end. This script runs
+    for days at a stretch and gets interrupted, and a failure list that only exists in
+    memory is exactly the thing that does not survive that.
+    """
+    entry = {
+        "file": name,
+        "stage": stage,
+        "message": f"{type(exc).__name__}: {exc}",
+        "report": traceback.format_exc(),
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    failures.append(entry)
+    print(f"[ERROR] {name} ({stage}): {entry['message']}")
+    deriv_out.mkdir(parents=True, exist_ok=True)
+    with open(deriv_out / FAILURE_LOG, "w") as f:
+        json.dump(failures, f, indent=2)
+
+
+def report_failures(failures, deriv_out):
+    """Print the end-of-run failure summary (runs even when the loop raises)."""
+    if not failures:
+        print("\n=== no failures ===")
+        return
+    print(f"\n=== {len(failures)} recording(s) failed ===")
+    for entry in failures:
+        print(f"  {entry['file']} ({entry['stage']}): {entry['message']}")
+    print(f"  full reports: {deriv_out / FAILURE_LOG}")
+
+
 if __name__ == "__main__":
     bids = load_bids(BIDS_MAT)
     rawdata = Path(bids["pth"])  # BIDS.pth is <project_root>\rawdata; derivatives live inside it
@@ -702,33 +934,52 @@ if __name__ == "__main__":
     # WAIT_MAX_MINUTES pass with no scan turning up anything new.
     pending = deriv_entries(bids, DESC, deriv_in)
     last_progress = time.monotonic()
-    while pending:
-        found, pending = _scan_pass(pending)
-        if found:
-            last_progress = time.monotonic()
-            for data_file in found:
-                final_ll, mat_path = run_amica(data_file, deriv_out)
-                if final_ll is not None:
-                    print(f"{data_file.stem}: final LL = {final_ll:.5f}")
-                # Runs for skipped recordings too: the fit is what is expensive and
-                # already-done, the labels may simply never have been made.
-                if RUN_ICLABEL and mat_path.is_file():
+    failures = []
+    try:
+        while pending:
+            found, pending = _scan_pass(pending)
+            if found:
+                last_progress = time.monotonic()
+                for data_file in found:
+                    # One recording per try, so a night that cannot be fitted costs that
+                    # night and nothing else. The fit can still fail outright once
+                    # fit_amica has exhausted FIT_FALLBACKS, and the mixing-matrix
+                    # convention check in run_amica deliberately raises.
                     try:
-                        run_iclabel(mat_path)
+                        final_ll, mat_path = run_amica(data_file, deriv_out)
+                        if final_ll is not None:
+                            print(f"{data_file.stem}: final LL = {final_ll:.5f}")
                     except Exception as exc:  # noqa: BLE001
-                        # The AMICA output is written and valid at this point; losing
-                        # the whole batch over a labelling problem would be worse than
-                        # carrying on and relabelling later.
-                        print(f"  ICLabel FAILED for {mat_path.name}: {exc!r}")
-        if not pending:
-            break
-        stalled_for = time.monotonic() - last_progress
-        if stalled_for >= WAIT_MAX_MINUTES * 60:
-            names = ", ".join(base.name for base, _ in pending)
-            raise FileNotFoundError(
-                f"giving up after {WAIT_MAX_MINUTES} min with no new input files -- "
-                f"still missing: {names}"
-            )
-        print(f"  {len(pending)} file(s) still missing, rechecking in {WAIT_LOOP_MINUTES} min "
-              f"(giving up after {WAIT_MAX_MINUTES} min total without progress)")
-        time.sleep(WAIT_LOOP_MINUTES * 60)
+                        record_failure(failures, data_file.stem, "amica", exc, deriv_out)
+                        continue
+                    finally:
+                        # Whatever happened, the next recording starts with the GPU to
+                        # itself: a fit that raised leaves its tensors in torch's cache.
+                        free_gpu()
+
+                    # Runs for skipped recordings too: the fit is what is expensive and
+                    # already-done, the labels may simply never have been made.
+                    if RUN_ICLABEL and mat_path.is_file():
+                        try:
+                            run_iclabel(mat_path)
+                        except Exception as exc:  # noqa: BLE001
+                            # The AMICA output is written and valid at this point; losing
+                            # the whole batch over a labelling problem would be worse than
+                            # carrying on and relabelling later.
+                            record_failure(failures, mat_path.name, "iclabel", exc, deriv_out)
+            if not pending:
+                break
+            stalled_for = time.monotonic() - last_progress
+            if stalled_for >= WAIT_MAX_MINUTES * 60:
+                names = ", ".join(base.name for base, _ in pending)
+                raise FileNotFoundError(
+                    f"giving up after {WAIT_MAX_MINUTES} min with no new input files -- "
+                    f"still missing: {names}"
+                )
+            print(f"  {len(pending)} file(s) still missing, rechecking in {WAIT_LOOP_MINUTES} min "
+                  f"(giving up after {WAIT_MAX_MINUTES} min total without progress)")
+            time.sleep(WAIT_LOOP_MINUTES * 60)
+    finally:
+        # Runs on the give-up raise above and on Ctrl-C too, so an interrupted run
+        # still says what it could not do.
+        report_failures(failures, deriv_out)
