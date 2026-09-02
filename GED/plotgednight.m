@@ -176,9 +176,13 @@ end
 %% ------------------------------------------------------------- time scaling
 switch opts.timeunit
     case 'auto'
-        if t(end) > 7200,   tscale = 3600; tlabel = 'Time (h)';
-        elseif t(end) > 120, tscale = 60;  tlabel = 'Time (min)';
-        else,                tscale = 1;   tlabel = 'Time (s)';
+        %%% Scale the axis to what is actually on screen: with a 30 s window over
+        %%% an 8 h night, labelling in hours would put every tick at 0.00.
+        tref = t(end);
+        if ~isempty(opts.xwindow), tref = opts.xwindow; end
+        if tref > 7200,    tscale = 3600; tlabel = 'Time (h)';
+        elseif tref > 120, tscale = 60;   tlabel = 'Time (min)';
+        else,              tscale = 1;    tlabel = 'Time (s)';
         end
     case 'h',   tscale = 3600; tlabel = 'Time (h)';
     case 'min', tscale = 60;   tlabel = 'Time (min)';

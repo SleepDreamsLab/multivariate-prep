@@ -176,9 +176,13 @@ end
 if showact
     act = reshape(GED.comp(comps, :), ncomps, []);
     t   = (0:size(act, 2) - 1) / srate;
-    if t(end) > 7200,    tscale = 3600; tlabel = 'Time (h)';
-    elseif t(end) > 120, tscale = 60;   tlabel = 'Time (min)';
-    else,                tscale = 1;    tlabel = 'Time (s)';
+    %%% Scale the axis to what is actually on screen: with a 30 s window over an
+    %%% 8 h recording, labelling in hours would put every tick at 0.00.
+    tref = t(end);
+    if ~isempty(opts.xwindow), tref = opts.xwindow; end
+    if tref > 7200,    tscale = 3600; tlabel = 'Time (h)';
+    elseif tref > 120, tscale = 60;   tlabel = 'Time (min)';
+    else,              tscale = 1;    tlabel = 'Time (s)';
     end
     tplot  = t / tscale;
     xlims  = [0 max(tplot(end), eps)];
