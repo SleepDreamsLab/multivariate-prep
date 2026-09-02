@@ -50,13 +50,17 @@ function plotgednight(GED, EEG, scoring, opts)
 %                part of the night the filters were built on. If the EEG passed
 %                in is itself the stage-selected recording, the scoring is
 %                subset with these before plotting, so the two still align.
-%   acttype      'line' (default) draws the activation as a signal, min/max
-%                decimated so a whole night stays honest at screen resolution.
-%                'heat' draws its smoothed absolute amplitude as a colour strip,
-%                which is easier to read across 8 hours - bursts of spindle or
-%                slow-wave activity show up as bright bands. Try both; 'line'
-%                is better for a few minutes, 'heat' for a whole night.
-%   smoothsec    Envelope smoothing for acttype 'heat', in seconds. Default: 5.
+%   acttype      How to draw each activation:
+%                  'signal'    (default) the component time series itself, min/max
+%                              decimated so a whole night stays honest at screen
+%                              resolution. Best for minutes, not hours.
+%                  'envelope'  its smoothed absolute amplitude as a line, which
+%                              stays readable once the raw trace turns into a
+%                              solid band
+%                  'heat'      the same envelope as a colour strip - the easiest
+%                              to read across 8 hours, with bursts of spindle or
+%                              slow-wave activity showing up as bright bands
+%   smoothsec    Envelope smoothing for 'envelope' and 'heat', in seconds. Default: 5.
 %   freqlim      x-limits for the spectra, in Hz. Default: [0 min(45, srate/2)].
 %   evalscale    y-scale of the eigenspectrum: 'auto' (default) switches to log
 %                when one component dwarfs the rest, which is otherwise the case
@@ -65,6 +69,11 @@ function plotgednight(GED, EEG, scoring, opts)
 %                colormap function name or an n-by-3 matrix. Default: 'hot'.
 %   timeunit     'auto' (default), 'h', 'min' or 's' for the shared time axis.
 %   linewidth    Line width for traces and spectra. Default: 1.6.
+%   xwindow      Seconds of data to show at once. [] (default) fits the whole
+%                recording into the axes; give it a duration - 30 for a screen of
+%                sleep scoring - and the traces show that much at a time, with a
+%                scrollbar underneath. The hypnogram scrolls with them, since it
+%                shares their time axis.
 %   maxpoints    Points drawn per activation trace. Default: 20000.
 %   title        Text for the figure title, e.g. the fileID. Default: ''.
 %
@@ -86,13 +95,15 @@ arguments
     opts.comps             double = []
     opts.epochlength (1,1) double {mustBePositive} = 30
     opts.keptepochs        double = []
-    opts.acttype     (1,:) char {mustBeMember(opts.acttype, {'line', 'heat'})} = 'line'
+    opts.acttype     (1,:) char {mustBeMember(opts.acttype, ...
+        {'signal', 'envelope', 'heat', 'line'})} = 'signal'
     opts.smoothsec   (1,1) double {mustBePositive} = 5
     opts.freqlim           double = []
     opts.evalscale   (1,:) char {mustBeMember(opts.evalscale, {'auto', 'linear', 'log'})} = 'auto'
     opts.cmap                     = 'hot'
     opts.timeunit    (1,:) char {mustBeMember(opts.timeunit, {'auto', 'h', 'min', 's'})} = 'auto'
     opts.linewidth   (1,1) double {mustBePositive} = 1.6
+    opts.xwindow           double = []
     opts.maxpoints   (1,1) double {mustBePositive} = 20000
     opts.title       (1,:) char = ''
 end
@@ -194,7 +205,7 @@ nrows     = 1 + double(hasHypno) + ncomps + blockRows;
 
 fig = figure('Color', 'w', 'Name', 'GED night overview', 'NumberTitle', 'off', ...
     'Position', [60 60 1500 min(1300, 240 + 105 * nrows)]);
-tiledlayout(nrows, ncols, 'TileSpacing', 'compact', 'Padding', 'compact');
+tl = tiledlayout(nrows, ncols, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 palette  = gedpalette(ncomps);
 cmapAxes = gobjects(0);   % re-coloured at the end; see the note down there
@@ -257,10 +268,24 @@ for i = 1:ncomps
 end
 
 %%% One time axis for the night: zoom or pan any of these and the rest follow,
-%%% which is the whole point of stacking them.
+%%% which is the whole point of stacking them. The hypnogram joins the x link but
+%%% not the y one - its y axis is the sleep stages, not an amplitude. Hence
+%%% linkprop and two separate groups: linkaxes keeps only one link per axis and
+%%% the second call would silently undo the first.
+actAxes = axTime(end - ncomps + 1:end);
+links   = {};
 if numel(axTime) > 1
-    linkaxes(axTime, 'x');
+    links{end + 1} = linkprop(axTime, 'XLim');
 end
+if ncomps > 1
+    links{end + 1} = linkprop(actAxes, 'YLim');
+    %%% A common amplitude range, set once - see the note in plotged.
+    yl = get(actAxes, 'YLim');
+    yl = vertcat(yl{:});
+    ylim(actAxes(1), [min(yl(:, 1)) max(yl(:, 2))]);
+end
+setappdata(fig, 'gedAxisLinks', links);
+addtimescroll(fig, tl, axTime, opts.xwindow / tscale, xlims);
 
 %% ------------------------------------------------- spectra and component maps
 R0 = row;

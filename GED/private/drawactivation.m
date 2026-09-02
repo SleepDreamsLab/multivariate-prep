@@ -6,8 +6,11 @@ function isheat = drawactivation(ax, tplot, x, srate, acttype, color, maxpoints,
 %   applied (EEGLAB's topoplot would otherwise overwrite it - see the note where
 %   the callers re-colour at the end).
 %
-%   acttype 'line'  the signal itself, min/max decimated for display
-%           'heat'  its smoothed absolute amplitude as a colour strip
+%   acttype 'signal'    the component time series itself, min/max decimated
+%           'envelope'  its smoothed absolute amplitude, as a line
+%           'heat'      the same envelope, as a colour strip
+%
+%   'line' is accepted as a deprecated alias for 'signal'.
 
 arguments
     ax
@@ -20,21 +23,44 @@ arguments
     smoothsec (1,1) double = 5
 end
 
+if strcmp(acttype, 'line'), acttype = 'signal'; end     % pre-rename callers
+
+%%% Both non-raw modes show the same quantity - the smoothed absolute amplitude.
+%%% Across long recordings the raw trace collapses into a solid band, while its
+%%% envelope shows when the component actually switches on.
 isheat = strcmp(acttype, 'heat');
-if isheat
-    %%% Smoothed absolute amplitude: across hours the raw trace is an unreadable
-    %%% band, while its envelope shows when the component actually switches on.
-    env      = movmean(abs(x), max(1, round(smoothsec * srate)));
-    [td, yd] = binaverage(tplot, env, maxpoints);
-    imagesc(ax, td, [0 1], yd);
-    set(ax, 'YTick', []);
-    clim(ax, [0 prctileish(yd, 99)]);
-else
-    [td, yd] = minmaxdecimate(tplot, x, maxpoints);
-    plot(ax, td, yd, 'Color', color, 'LineWidth', 0.7);
-    axis(ax, 'tight');
+switch acttype
+    case 'heat'
+        env      = envelope_(x, srate, smoothsec);
+        [td, yd] = binaverage(tplot, env, maxpoints);
+        imagesc(ax, td, [0 1], yd);
+        set(ax, 'YTick', []);
+        clim(ax, [0 prctileish(yd, 99)]);
+
+    case 'envelope'
+        env      = envelope_(x, srate, smoothsec);
+        [td, yd] = minmaxdecimate(tplot, env, maxpoints);
+        plot(ax, td, yd, 'Color', color, 'LineWidth', 1.1);
+        axis(ax, 'tight');
+        %%% An amplitude is measured from zero, so the axis starts there: with a
+        %%% tight lower limit, ordinary ripple in a flat envelope would look like
+        %%% a component switching on and off.
+        ylim(ax, [0 max(max(yd) * 1.05, eps)]);
+
+    otherwise   % 'signal'
+        [td, yd] = minmaxdecimate(tplot, x, maxpoints);
+        plot(ax, td, yd, 'Color', color, 'LineWidth', 0.7);
+        axis(ax, 'tight');
 end
 box(ax, 'off');
+end
+
+% -------------------------------------------------------------------------
+function env = envelope_(x, srate, smoothsec)
+% Smoothed absolute amplitude. A moving average of |x| rather than a Hilbert
+% envelope, so no Signal Processing Toolbox is needed.
+
+env = movmean(abs(x), max(1, round(smoothsec * srate)));
 end
 
 % -------------------------------------------------------------------------
