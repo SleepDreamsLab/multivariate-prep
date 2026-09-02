@@ -41,7 +41,7 @@ from scipy.signal import cheb2ord, cheby2, sosfiltfilt
 
 # time.sleep(1 * 30 * 60)
 
-BIDS_MAT      = Path(__file__).parent / "BidsFiles" / "BIDS_DROP.mat"
+BIDS_MAT      = Path(__file__).parent.parent / "Pipelines" / "BidsFiles" / "BIDS_DROP.mat"
 DERIV_IN_DIR  = "prep-zc-ged"  # derivatives subfolder to read the desc-* .set files from
 DERIV_OUT_DIR = "prep-zc-ged"    # derivatives subfolder to write AMICA output under
 DESC          = "hpzcged" # zc
