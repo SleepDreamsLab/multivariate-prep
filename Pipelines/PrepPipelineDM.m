@@ -18,8 +18,8 @@ BIDS = BIDS_DM{1}; fails = [];
 
 % Variables
 acqlabel        = '250Hz';    % acqlabel of EEG file, leave '' if not used
-refresh         = false; % re-run when outputs already exist
-refreshFigures  = false; % re-run when figures alreaady exist
+refresh         = true; % re-run when outputs already exist
+refreshFigures  = true; % re-run when figures alreaady exist
 targetsrate     = 250;   % down-sample to this srate
 removeDC        = false; % apply 0.1 Hz high-pass filter?
 net             = 'EGI128';
@@ -36,7 +36,7 @@ filtdesc    = 'hpzc';    % zc:  zapline-plus & cleanline
 geddesc     = 'hpzcged'; % ged: gedai 
 
 % Subejct and Session filter
-subjects    = {};   % {'sub-DM02', '...'} or {} to run on all subjects
+subjects    = {'sub-DM40'};   % {'sub-DM02', '...'} or {} to run on all subjects
 sessions    = {};   % {'ses-W1', '...'} or {} to run on all sessions
 
 % Universal default parameters
