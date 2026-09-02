@@ -105,23 +105,33 @@ function [td, yd] = minmaxdecimate(t, y, maxpoints)
 
 n = numel(y);
 if n <= maxpoints
-    td = t; yd = y;
+    td = t(:).'; yd = y(:).';
     return
 end
+
+%%% per is rounded up, and the last bin is padded rather than dropped, so every
+%%% sample lands in a bin. Rounding down and cutting the remainder instead leaves
+%%% the trace stopping short of the right-hand edge - invisible across a whole
+%%% recording, but a fifth of a minute missing from a 3-minute window.
 nbin = max(1, floor(maxpoints / 2));
-per  = floor(n / nbin);
-n2   = nbin * per;
-Y    = reshape(y(1:n2), per, nbin);
-T    = reshape(t(1:n2), per, nbin);
+per  = ceil(n / nbin);
+nb   = ceil(n / per);
+pad  = nb * per - n;
+
+%%% NaN pads rather than repeated samples: min and max ignore NaN, so the padding
+%%% cannot invent an extreme. The last bin always holds at least one real sample,
+%%% so no bin is entirely NaN.
+Y = reshape([y(:); nan(pad, 1)], per, nb);
+T = reshape([t(:); nan(pad, 1)], per, nb);
 
 [mn, imn] = min(Y, [], 1);
 [mx, imx] = max(Y, [], 1);
-tmn = T(sub2ind(size(T), imn, 1:nbin));
-tmx = T(sub2ind(size(T), imx, 1:nbin));
+tmn = T(sub2ind(size(T), imn, 1:nb));
+tmx = T(sub2ind(size(T), imx, 1:nb));
 
 first = tmn <= tmx;                       % whichever extreme comes first in time
-td = zeros(1, 2 * nbin);
-yd = zeros(1, 2 * nbin);
+td = zeros(1, 2 * nb);
+yd = zeros(1, 2 * nb);
 td(1:2:end) = min(tmn, tmx);  td(2:2:end) = max(tmn, tmx);
 yd(1:2:end) = mn .* first + mx .* ~first;
 yd(2:2:end) = mx .* first + mn .* ~first;
@@ -133,13 +143,17 @@ function [td, yd] = binaverage(t, y, nbin)
 
 n = numel(y);
 if n <= nbin
-    td = t; yd = y;
+    td = t(:).'; yd = y(:).';
     return
 end
-per = floor(n / nbin);
-n2  = nbin * per;
-yd  = mean(reshape(y(1:n2), per, nbin), 1);
-td  = mean(reshape(t(1:n2), per, nbin), 1);
+
+%%% Same rounding as minmaxdecimate, and for the same reason: a truncated tail
+%%% would leave the strip ending before the right-hand edge of the axes.
+per = ceil(n / nbin);
+nb  = ceil(n / per);
+pad = nb * per - n;
+yd  = mean(reshape([y(:); nan(pad, 1)], per, nb), 1, 'omitnan');
+td  = mean(reshape([t(:); nan(pad, 1)], per, nb), 1, 'omitnan');
 end
 
 % -------------------------------------------------------------------------
