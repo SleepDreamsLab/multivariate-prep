@@ -54,6 +54,15 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %                     plausible single-recording runtime. Default: 360 (6 h).
 %   lockheartbeatmin  Minutes between heartbeat writes on a held claim. Default: 5.
 %
+%   Parallel pool
+%   -------------
+%   poolworkers       Workers for the FOOOF pool. 'auto' (default) sizes it from the
+%                     machine's available memory and core count via gedai.autoPoolSize;
+%                     'off' leaves the pool untouched, so run.run_fooof opens the
+%                     profile default on its first parfor; a positive integer sets it
+%                     explicitly. 'auto' only ever shrinks an existing pool, never grows
+%                     one, so a pool you opened deliberately is left as you set it.
+%
 %   EEG
 %   ---
 %   tasklabel         BIDS task label(s) to query. Default: {'Sleep','sleep'}.
@@ -111,6 +120,9 @@ arguments
     opts.lockpath         char  = ''
     opts.lockstalemin     (1,1) double {mustBePositive} = 360
     opts.lockheartbeatmin (1,1) double {mustBePositive} = 5
+
+    %--- Parallel pool ---
+    opts.poolworkers = 'auto'
 
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
@@ -176,6 +188,62 @@ if ~isempty(opts.scoringpath)
     scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
 end
 
+%%% Size the FOOOF pool before the batch rather than letting run.run_fooof open the
+%%% profile default on its first parfor. That default is one worker per core whatever
+%%% else is going on, and each worker is a separate MATLAB process competing with a
+%%% client already holding two full-night recordings and eval_clean's interpolated
+%%% copies of them. gedai.autoPoolSize scales that to the machine, so the same call is
+%%% right on a 64 GB box and on a 2 TB one.
+if ischar(opts.poolworkers) || isstring(opts.poolworkers)
+    switch lower(string(opts.poolworkers))
+        case "off",  nWorkers = [];
+        case "auto", nWorkers = gedai.autoPoolSize();
+        otherwise
+            error('bidsfun_evalfigs:poolworkers', ...
+                'poolworkers must be ''auto'', ''off'', or a positive integer.');
+    end
+else
+    mustBeInteger(opts.poolworkers); mustBePositive(opts.poolworkers);
+    nWorkers = double(opts.poolworkers);
+end
+
+if ~isempty(nWorkers)
+    %%% Shrink an oversized pool, open one when there is none, and otherwise leave a
+    %%% smaller existing pool alone - somebody sized it that way on purpose.
+    try
+        pool = gcp('nocreate');
+        if isempty(pool)
+            fprintf('Opening parallel pool with %d worker(s).\n', nWorkers);
+            parpool('Processes', nWorkers);
+        elseif pool.NumWorkers > nWorkers
+            fprintf('Resizing parallel pool from %d to %d worker(s).\n', ...
+                pool.NumWorkers, nWorkers);
+            delete(pool);
+            parpool('Processes', nWorkers);
+        else
+            fprintf('Reusing parallel pool (%d worker(s)).\n', pool.NumWorkers);
+        end
+    catch ME
+        %%% No Parallel Computing Toolbox, or the pool refused to start. FOOOF still
+        %%% runs, just serially - not a reason to abandon the batch.
+        warning('bidsfun_evalfigs:noPool', ...
+            'Could not size the parallel pool (%s); continuing without one.', ME.message);
+    end
+end
+
+%%% Which figure means "finished". run.eval_clean writes its figures in a fixed order,
+%%% so the last one the current toggles will produce is the only file whose presence
+%%% proves the recording ran to completion. Gating on a fixed name instead - the first
+%%% figure written - marks a recording done the moment it starts producing output, so
+%%% anything that died partway through is skipped forever with an incomplete set.
+sentinelSuffix = gedai.lastEvalFigure(opts);
+if isempty(sentinelSuffix)
+    fprintf(['No figure with a predictable name is enabled; every recording will be ' ...
+             'processed regardless of existing output.\n']);
+else
+    fprintf('Resume check keys on _%s.png\n', sentinelSuffix);
+end
+
 %%% Loop over EEG files
 failures = {};
 for ifile = 1:numel(filesEEG)
@@ -196,8 +264,8 @@ for ifile = 1:numel(filesEEG)
     fprintf('\n=== %s ===\n', fileID)
 
     %%% Skip if already processed
-    pngFile = fullfile(opts.figpath, ['desc-' opts.afterdesc], subDir, [fileID '_psd_per_stage.png']);
-    if ~opts.refresh && isfile(pngFile)
+    pngFile = fullfile(opts.figpath, ['desc-' opts.afterdesc], subDir, [fileID '_' sentinelSuffix '.png']);
+    if ~opts.refresh && ~isempty(sentinelSuffix) && isfile(pngFile)
         fprintf('[skip] output exists: %s\n', pngFile)
         continue
     end
@@ -221,7 +289,7 @@ for ifile = 1:numel(filesEEG)
         end
         %%% Re-check now that the claim is ours: the other machine may have finished this
         %%% recording and dropped its lock between our skip check above and here.
-        if ~opts.refresh && isfile(pngFile)
+        if ~opts.refresh && ~isempty(sentinelSuffix) && isfile(pngFile)
             fprintf('[skip] output exists: %s\n', pngFile)
             continue
         end
@@ -332,12 +400,22 @@ for ifile = 1:numel(filesEEG)
             'PlotTimefreq', opts.PlotTimefreq, ...
             'PlotExponentByStage', opts.PlotExponentByStage, ...
             'PlotSlopesTimecourse', opts.PlotSlopesTimecourse);
-        close all;
 
     catch ME
         fprintf('[ERROR] %s: %s\n', fileID, ME.message);
         failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
     end
+
+    %%% Release this recording's figures and memory on every path, success or failure,
+    %%% before the next one starts allocating. Both EEG structs run to several GB on a
+    %%% full night and run.eval_clean holds its own interpolated copies while it works,
+    %%% so carrying them across the boundary hands the next recording a peak it may not
+    %%% fit inside. close all has to sit out here too: while it lived at the end of the
+    %%% try, a recording that errored left every figure it had already drawn open, and a
+    %%% run of consecutive failures piled them up - which is precisely what a machine
+    %%% running out of memory produces.
+    close all force
+    clear EEGraw EEGafter
 
     %%% Drop the claim, whether the recording succeeded or failed. A failed recording has
     %%% to become available again - it is exactly the one another machine (or a later run

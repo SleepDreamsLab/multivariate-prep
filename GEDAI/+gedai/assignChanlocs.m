@@ -29,6 +29,16 @@ if hasChanlocs && ~opts.forceoverwrite
 
 elseif ~isempty(sfppath)
     sfpFile = gedai.matchSfpFile(sfppath, p.entities.sub, p.entities.ses);
+    %%% No montage for this session is a hard failure. The resolver never substitutes
+    %%% another session's montage, so there is nothing sensible left to fall back to -
+    %%% and carrying on would build every topoplot and every interpolated channel on
+    %%% the wrong geometry, with nothing in the output to show for it.
+    if isempty(sfpFile)
+        error('gedai:assignChanlocs:noSfp', ...
+            ['No SFP montage found for %s (sub-%s, ses-%s). A montage from another ' ...
+             'session is not a valid substitute, so none was used.'], ...
+            fileID, p.entities.sub, p.entities.ses);
+    end
     fprintf('\nReading %s ...\n', sfpFile)
     chanlocs     = readlocs(sfpFile);
     chanlocs_reg = register_fiducials(chanlocs);
