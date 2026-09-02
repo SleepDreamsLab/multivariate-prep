@@ -382,8 +382,16 @@ M = S;
 M(M == 2)   = 1;                 % "stale" (refresh) shown the same as present
 M(isnan(M)) = -1;                % fold "not checked" into its own colour bin
 
+%%% Rows are grouped by subject, so a participant label belongs to a BLOCK of recordings,
+%%% not to a single row - both the tick placement and the figure height follow from that.
+subj     = regexprep(fileIDs(:), '_.*$', '');
+firstIdx = find([true; ~strcmp(subj(2:end), subj(1:end-1))]);
+lastIdx  = [firstIdx(2:end) - 1; nRow];
+midIdx   = (firstIdx + lastIdx) / 2;
+
 fig = figure('Color', 'w', 'Name', 'prep status', ...
-    'Position', [100 100 max(560, 90*numel(colLabels)+260) min(1100, 260+14*nRow)]);
+    'Position', [100 100 max(560, 90*numel(colLabels)+260) ...
+                 min(1200, 260 + max(14*nRow, 16*numel(firstIdx)))]);
 ax = axes(fig);
 imagesc(ax, M);
 cmap = [0.75 0.75 0.75;   % -1 not checked
@@ -398,16 +406,27 @@ ax.XTickLabelRotation = 30;
 ax.TickLabelInterpreter = 'none';
 ax.XAxisLocation = 'top';
 
-%%% Y ticks: one per subject, at its first recording (306 individual labels are unreadable)
-subj = regexprep(fileIDs(:), '_.*$', '');
-firstIdx = find([true; ~strcmp(subj(2:end), subj(1:end-1))]);
-if numel(firstIdx) <= 80
-    ax.YTick = firstIdx;
-    ax.YTickLabel = subj(firstIdx);
+%%% Y ticks: one per subject, CENTRED on that subject's block of recordings. A tick on the
+%%% block's first row sits half a block above centre, and with blocks only a handful of
+%%% recordings tall that reads as labelling the participant above - which is exactly how a
+%%% red row gets blamed on the wrong subject.
+%%% The label font then shrinks to whatever the block pitch allows, and only once even 6 pt
+%%% will not fit are labels thinned out: overprinted labels are worse than fewer labels,
+%%% because they are still read as if they pointed somewhere.
+drawnow;
+axPix = getpixelposition(ax, true);
+%%% 0.9: the southoutside legend is added below and shrinks the axes a little.
+pitch = 0.9 * max(1, axPix(4)) / numel(firstIdx);   % px of axis height per participant
+fs    = min(10, floor(pitch / 1.35));         % ~1.35 px of line height per pt
+if fs >= 6
+    keep = 1:numel(firstIdx);
 else
-    ax.YTick = firstIdx(1:ceil(numel(firstIdx)/60):end);
-    ax.YTickLabel = subj(ax.YTick);
+    fs   = 6;
+    keep = 1:ceil(6 * 1.35 / pitch):numel(firstIdx);
 end
+ax.YAxis.FontSize = fs;
+ax.YTick          = midIdx(keep);
+ax.YTickLabel     = subj(firstIdx(keep));
 
 %%% Grid lines between cells, a light rule where a new participant starts, and a heavier
 %%% one splitting the inputs off from the outputs.
