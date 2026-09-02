@@ -23,6 +23,8 @@ function plotged(GED, opts)
 %              e.g. [1 4] to compare the top component against a later one you
 %              picked by eye (3.7). Overrides ncomps.
 %   freqlim    x-axis limits for the spectra, in Hz. Default: [0 min(45, srate/2)].
+%   cmap       Colormap for the component maps: any colormap function name or an
+%              n-by-3 matrix. Default: 'hot'.
 %
 %   Example
 %   -------
@@ -35,6 +37,7 @@ arguments
     opts.ncomps (1,1) double = 5
     opts.comps        double = []
     opts.freqlim      double = []
+    opts.cmap                = 'hot'
 end
 
 comps = opts.comps;
@@ -63,14 +66,23 @@ for c = comps
 end
 xlabel('Component'); ylabel('\lambda (S:R ratio)'); title('Eigenspectrum'); box off
 
-hastopo = exist('topoplot', 'file') == 2 && ~isempty(GED.info.chanlocs);
+hastopo = hastopocoords(GED.info.chanlocs);
+cmap    = resolvecmap(opts.cmap);
+topoAxes = gobjects(0);
 for i = 1:ncomps
     c = comps(i);
-    nexttile;
+    ax = nexttile;
     if hastopo
-        topoplot(GED.maps(:, c), GED.info.chanlocs, 'electrodes', 'off', 'numcontour', 0);
+        try
+            topoplot(GED.maps(:, c), GED.info.chanlocs, 'electrodes', 'off', 'numcontour', 0);
+            topoAxes(end + 1) = ax; %#ok<AGROW>
+        catch ME
+            warning('plotged:topoplotFailed', ...
+                'topoplot failed (%s); falling back to a weight bar.', ME.message);
+            cla(ax); bar(ax, GED.maps(:, c), 'k'); axis(ax, 'tight'); box(ax, 'off');
+        end
     else
-        bar(GED.maps(:, c), 'k'); axis tight; box off
+        bar(ax, GED.maps(:, c), 'k'); axis(ax, 'tight'); box(ax, 'off');
     end
     title(sprintf('#%d, \\lambda = %.2f', c, GED.evals(c)));
 end
@@ -84,27 +96,12 @@ for i = 1:ncomps
     if i == 1, ylabel('Power (dB)'); end
     box off
 end
-end
 
-% -------------------------------------------------------------------------
-function [pxx, hz] = compspectrum(x, srate)
-% Welch spectrum of a component time series, with a plain-MATLAB fallback for
-% installations without the Signal Processing Toolbox.
-
-x   = x(:);
-win = min(numel(x), round(4 * srate));
-if exist('pwelch', 'file') == 2
-    [pxx, hz] = pwelch(x, hann(win), [], [], srate);
-    return
+%%% Set after every topoplot call, not inside the loop: EEGLAB's topoplot applies
+%%% its own colormap and background from icadefs to the figure it lands in, and
+%%% would otherwise overwrite whatever the earlier tiles were given.
+for ax = topoAxes
+    colormap(ax, cmap);
 end
-nseg  = max(1, floor(numel(x) / win));
-taper = 0.5 - 0.5 * cos(2 * pi * (0:win - 1)' / win);
-pxx   = zeros(floor(win / 2) + 1, 1);
-for s = 1:nseg
-    seg = x((s - 1) * win + (1:win)) .* taper;
-    amp = abs(fft(seg)).^2;
-    pxx = pxx + amp(1:floor(win / 2) + 1);
-end
-pxx = pxx / (nseg * srate * sum(taper.^2));
-hz  = linspace(0, srate / 2, numel(pxx))';
+set(gcf, 'Color', 'w');
 end
