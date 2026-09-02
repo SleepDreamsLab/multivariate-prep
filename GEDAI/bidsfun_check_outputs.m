@@ -1,37 +1,57 @@
 function report = bidsfun_check_outputs(BIDS, opts)
-% BIDSFUN_CHECK_OUTPUTS  Inventory the prep-pipeline outputs and flag what is missing.
+% BIDSFUN_CHECK_OUTPUTS  Inventory the prep-pipeline inputs and outputs, and flag what is missing.
 %
 %   report = bidsfun_check_outputs(BIDS, Name, Value, ...)
 %
 %   Walks the same EEG recordings that bidsfun_detect_badchans, bidsfun_hp_zap_cleanline,
 %   bidsfun_evalfigs, bidsfun_gedai and ICA/run-pamica.py iterate over (same bids.query
-%   on task/acq), and for each recording checks whether every file those stages are
-%   supposed to write actually exists on disk. Prints a per-recording status matrix and
-%   the list of files still to produce, and returns the whole thing as a struct for
-%   scripting.
+%   on task/acq), and per recording checks
+%     - the external INPUTS bidsfun_gedai needs: sleep scoring, SFP montage, leadfield
+%     - the OUTPUTS every stage is supposed to write
+%   Prints a per-recording status matrix, a completeness summary and the list of files
+%   still to produce, draws a heatmap, and returns the whole thing as a struct.
 %
-%   Nothing is (re)computed and nothing is written - this is a read-only status check.
+%   The two are worth separating: a missing output just means the stage has not run yet,
+%   while a missing input means it can never run for that recording until someone
+%   produces the file - so they are listed apart, and the heatmap rules them off.
 %
-%   Name-Value (defaults mirror PrepPipelineDROP.m)
-%   ----------------------------------------------
+%   Inputs are resolved with the pipeline's own resolvers (gedai.collectScoringFiles +
+%   gedai.matchScoringFile, gedai.matchSfpFile, and gedai.loadrefcov's path rule) rather
+%   than a reimplementation, so this check cannot drift from what bidsfun_gedai does.
+%
+%   Nothing is (re)computed and nothing is written except the heatmap/CSV.
+%
+%   Name-Value (defaults mirror PrepPipelineDROP.m / bidsfun_gedai)
+%   --------------------------------------------------------------
 %   derivfolder     derivatives sub-folder            (default 'prep-zc-ged')
 %   badchandesc     desc of bidsfun_detect_badchans   (default 'hp')
 %   filtdesc        desc of bidsfun_hp_zap_cleanline  (default 'hpzc')
 %   geddesc         desc of bidsfun_gedai             (default 'hpzcged')
 %   icadesc         OUT_DESC of run-pamica.py         (default 'pamica')
-%   refresh         treat every expected output as still-to-produce, even when it is
+%   refresh         treat every expected OUTPUT as still-to-produce, even when it is
 %                   already on disk - i.e. preview what a pipeline run with refresh=true
-%                   would (re)generate. Present files are then marked STALE rather than
-%                   ok, and all of them are listed under "still to produce". (default false)
+%                   would regenerate. Inputs are unaffected: nothing here produces them.
+%                   (default false)
 %   tasklabel       BIDS task label(s)                (default {'Sleep','sleep'})
 %   acqlabel        BIDS acq label                    (default '')
 %   subjectfilter   cell of subject IDs; {} = all
 %   sessionfilter   cell of session IDs; {} = all
 %   savepath        derivatives root  (default <BIDS.pth>/derivatives/<derivfolder>)
 %   figpath         figures root      (default <savepath>/figures)
+%   checkinputs     check scoring / SFP / leadfield   (default true)
+%   scoringpath     scoring root, as passed to bidsfun_gedai. '' searches
+%                   <BIDS.pth>/<sub>/<ses> per recording, exactly as that function does.
+%                   (default <BIDS.pth>/derivatives/scoring/scores/Manual_Checked)
+%   sfppath         path handed to the SFP resolver   (default BIDS.pth)
+%   leadfieldpath   leadfield root; a folder is read as
+%                   <root>/<sub>/<ses>/headmodel_surf_openmeeg.mat, anything else as the
+%                   file itself
+%                   (default <BIDS.pth>/../Data_Analysis/Brainstorm_db/Leadfield_PM/data)
 %   checkfigures    also check the evalfigs sentinel PNGs (default true)
 %   checkica        also check the run-pamica.py / ICLabel outputs (default true)
 %   csvout          path to also write the status table as CSV; '' = skip (default '')
+%   plot            draw the status heatmap             (default true)
+%   plotfile        where to save it ('' = <figpath>/prep_status_heatmap.png)
 
 arguments
     BIDS
@@ -47,6 +67,13 @@ arguments
     opts.sessionfilter  cell = {}
     opts.savepath       char = ''
     opts.figpath        char = ''
+
+    %--- External inputs (same defaults as bidsfun_gedai) ---
+    opts.checkinputs (1,1) logical = true
+    opts.scoringpath    char = fullfile(BIDS.pth, 'derivatives', 'scoring', 'scores', 'Manual_Checked')
+    opts.sfppath        char = BIDS.pth
+    opts.leadfieldpath  char = fullfile(BIDS.pth, '..', 'Data_Analysis', 'Brainstorm_db', 'Leadfield_PM', 'data')
+
     opts.checkfigures (1,1) logical = true
     opts.checkica     (1,1) logical = true
     opts.csvout         char = ''
@@ -61,6 +88,11 @@ fprintf('\n=== bidsfun_check_outputs ===\n');
 fprintf('derivatives : %s\n', opts.savepath);
 fprintf('desc labels : badchan=%s  filt=%s  ged=%s  ica=%s\n', ...
     opts.badchandesc, opts.filtdesc, opts.geddesc, opts.icadesc);
+if opts.checkinputs
+    fprintf('scoring     : %s\n', ternary(isempty(opts.scoringpath), '<per recording, beside the raw data>', opts.scoringpath));
+    fprintf('sfp         : %s\n', opts.sfppath);
+    fprintf('leadfields  : %s\n', opts.leadfieldpath);
+end
 if opts.refresh
     fprintf('refresh     : ON - every expected output is reported as still-to-produce\n');
 end
@@ -74,36 +106,65 @@ if isempty(filesEEG)
     error('bidsfun_check_outputs:noFiles', 'No matching EEG files found in BIDS layout.');
 end
 
+%%% Scoring files, collected once for the whole tree - the same single recursive scan
+%%% bidsfun_gedai does when scoringpath is set. With scoringpath empty it collects per
+%%% recording instead (below), again mirroring that function.
+scoringfiles = {};
+if opts.checkinputs && ~isempty(opts.scoringpath)
+    if ~isfolder(opts.scoringpath)
+        warning('bidsfun_check_outputs:noScoringDir', ...
+            'Scoring directory does not exist: %s - every recording will report scoring as missing.', ...
+            opts.scoringpath);
+    else
+        fprintf('Scanning scoring directory ...\n');
+        scoringfiles = gedai.collectScoringFiles(opts.scoringpath);
+        fprintf('  %d scoring file(s) found\n\n', numel(scoringfiles));
+    end
+end
+
+%%% gedai.matchSfpFile warns once per ambiguous session; over a few hundred recordings
+%%% that buries the actual report, and the ambiguity is a naming problem for the montage
+%%% folder rather than something this check can act on.
+wstate = warning('off', 'gedai:matchSfpFile:ambiguous');
+cleanupWarn = onCleanup(@() warning(wstate));
+
 %%% Column definitions: {label, stage, group, showInTable}
-%%%   group: 'data' always checked, 'fig' gated by checkfigures, 'ica' gated by checkica
+%%%   group: 'input' gated by checkinputs, 'data' always checked,
+%%%          'fig' gated by checkfigures, 'ica' gated by checkica
 %%%   showInTable: sidecars/tsv are still checked and still appear in the completeness
 %%%   summary and the "still to produce" list, but the per-recording matrix shows only
 %%%   one representative file per stage to stay readable.
 cols = { ...
-    'badchan.mat'    1 'data' true
-    'badchan.tsv'    1 'data' false
-    'badchan.json'   1 'data' false
-    'zc.set'         2 'data' true
-    'zc.json'        2 'data' false
-    'eval_zc.png'    2 'fig'  true
-    'ged.set'        3 'data' true
-    'eval_ged.png'   3 'fig'  true
-    'ica.mat'        4 'ica'  true
-    'ica.json'       4 'ica'  false
-    'iclabels.tsv'   4 'ica'  true
-    'iclabels.json'  4 'ica'  false };
+    'scoring'        0 'input' true
+    'sfp'            0 'input' true
+    'leadfield'      0 'input' true
+    'badchan.mat'    1 'data'  true
+    'badchan.tsv'    1 'data'  false
+    'badchan.json'   1 'data'  false
+    'zc.set'         2 'data'  true
+    'zc.json'        2 'data'  false
+    'eval_zc.png'    2 'fig'   true
+    'ged.set'        3 'data'  true
+    'eval_ged.png'   3 'fig'   true
+    'ica.mat'        4 'ica'   true
+    'ica.json'       4 'ica'   false
+    'iclabels.tsv'   4 'ica'   true
+    'iclabels.json'  4 'ica'   false };
 colLabels = cols(:,1);
 colGroup  = cols(:,3);
 colShow   = cell2mat(cols(:,4))';
 nCol      = size(cols,1);
 
-active = true(1, nCol);
+isInput = strcmp(colGroup, 'input')';
+active  = true(1, nCol);
+active(isInput)                 = opts.checkinputs;
 active(strcmp(colGroup, 'fig')) = opts.checkfigures;
 active(strcmp(colGroup, 'ica')) = opts.checkica;
 
-rows     = {};   % one struct per recording
-todoList = {};   % flat list of files still to produce (respects refresh)
-missList = {};   % flat list of files genuinely absent (ignores refresh)
+rows      = {};   % one struct per recording
+todoList  = {};   % outputs still to produce (respects refresh)
+missList  = {};   % outputs genuinely absent (ignores refresh)
+blockList = {};   % missing INPUTS - nothing in the pipeline produces these
 
 for ifile = 1:numel(filesEEG)
     eegFile = filesEEG{ifile};
@@ -119,31 +180,50 @@ for ifile = 1:numel(filesEEG)
     %%% run-pamica.py swaps desc-<geddesc> -> desc-<icadesc> and _eeg -> _ica
     icaBase = fullfile(outDir, sprintf('%s_desc-%s_ica', fileID, opts.icadesc));
 
-    exp = containers.Map('KeyType', 'char', 'ValueType', 'char');
-    exp('badchan.mat')   = fullfile(outDir, sprintf('%s_desc-%s_badchans.mat',  fileID, opts.badchandesc));
-    exp('badchan.tsv')   = fullfile(outDir, sprintf('%s_desc-%s_channels.tsv',  fileID, opts.badchandesc));
-    exp('badchan.json')  = fullfile(outDir, sprintf('%s_desc-%s_badchans.json', fileID, opts.badchandesc));
-    exp('zc.set')        = fullfile(outDir, sprintf('%s_desc-%s_eeg.set',       fileID, opts.filtdesc));
-    exp('zc.json')       = fullfile(outDir, sprintf('%s_desc-%s_eeg.json',      fileID, opts.filtdesc));
-    exp('ged.set')       = fullfile(outDir, sprintf('%s_desc-%s_eeg.set',       fileID, opts.geddesc));
-    exp('eval_zc.png')   = fullfile(opts.figpath, ['desc-' opts.filtdesc], subDir, [fileID '_psd_per_stage.png']);
-    exp('eval_ged.png')  = fullfile(opts.figpath, ['desc-' opts.geddesc],  subDir, [fileID '_psd_per_stage.png']);
-    exp('ica.mat')       = [icaBase '.mat'];
-    exp('ica.json')      = [icaBase '.json'];
-    exp('iclabels.tsv')  = fullfile(outDir, sprintf('%s_desc-%s_iclabels.tsv',  fileID, opts.icadesc));
-    exp('iclabels.json') = fullfile(outDir, sprintf('%s_desc-%s_iclabels.json', fileID, opts.icadesc));
+    %%% Expected outputs: the path is known up front, so presence is one isfile each.
+    expect = containers.Map('KeyType', 'char', 'ValueType', 'char');
+    found  = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+    expect('badchan.mat')   = fullfile(outDir, sprintf('%s_desc-%s_badchans.mat',  fileID, opts.badchandesc));
+    expect('badchan.tsv')   = fullfile(outDir, sprintf('%s_desc-%s_channels.tsv',  fileID, opts.badchandesc));
+    expect('badchan.json')  = fullfile(outDir, sprintf('%s_desc-%s_badchans.json', fileID, opts.badchandesc));
+    expect('zc.set')        = fullfile(outDir, sprintf('%s_desc-%s_eeg.set',       fileID, opts.filtdesc));
+    expect('zc.json')       = fullfile(outDir, sprintf('%s_desc-%s_eeg.json',      fileID, opts.filtdesc));
+    expect('ged.set')       = fullfile(outDir, sprintf('%s_desc-%s_eeg.set',       fileID, opts.geddesc));
+    expect('eval_zc.png')   = fullfile(opts.figpath, ['desc-' opts.filtdesc], subDir, [fileID '_psd_per_stage.png']);
+    expect('eval_ged.png')  = fullfile(opts.figpath, ['desc-' opts.geddesc],  subDir, [fileID '_psd_per_stage.png']);
+    expect('ica.mat')       = [icaBase '.mat'];
+    expect('ica.json')      = [icaBase '.json'];
+    expect('iclabels.tsv')  = fullfile(outDir, sprintf('%s_desc-%s_iclabels.tsv',  fileID, opts.icadesc));
+    expect('iclabels.json') = fullfile(outDir, sprintf('%s_desc-%s_iclabels.json', fileID, opts.icadesc));
+    for c = find(~isInput)
+        found(colLabels{c}) = isfile(expect(colLabels{c}));
+    end
+
+    %%% External inputs: resolved by search, so the path is only known once found. When
+    %%% nothing matches, what gets recorded is where it looked - that is the actionable
+    %%% part of a missing input.
+    if opts.checkinputs
+        [expect('scoring'),   found('scoring')]   = resolveScoring(p, subDir, BIDS, opts, scoringfiles);
+        [expect('sfp'),       found('sfp')]       = resolveSfp(p, opts);
+        [expect('leadfield'), found('leadfield')] = resolveLeadfield(p, opts);
+    end
 
     r = struct('fileID', fileID, 'sub', ['sub-' p.entities.sub], 'ses', ['ses-' p.entities.ses]);
     status = nan(1, nCol);   % 1 present, 0 missing, 2 present-but-stale (refresh), NaN not checked
     for c = 1:nCol
         if ~active(c), continue, end
-        f  = exp(colLabels{c});
-        ok = isfile(f);
-        if ~ok
+        key = colLabels{c};
+        f   = expect(key);
+        if ~found(key)
             status(c) = 0;
-            missList{end+1,1} = f; %#ok<AGROW>
-            todoList{end+1,1} = f; %#ok<AGROW>
-        elseif opts.refresh
+            if isInput(c)
+                blockList{end+1,1} = sprintf('%-42s %s : %s', fileID, key, f); %#ok<AGROW>
+            else
+                missList{end+1,1} = f; %#ok<AGROW>
+                todoList{end+1,1} = f; %#ok<AGROW>
+            end
+        elseif opts.refresh && ~isInput(c)
+            %%% Inputs are never regenerated, so refresh does not apply to them.
             status(c) = 2;
             todoList{end+1,1} = f; %#ok<AGROW>
         else
@@ -151,12 +231,17 @@ for ifile = 1:numel(filesEEG)
         end
     end
     r.status = status;
+    if opts.checkinputs
+        r.inputs = struct('scoring', expect('scoring'), 'sfp', expect('sfp'), ...
+            'leadfield', expect('leadfield'));
+    end
     rows{end+1,1} = r; %#ok<AGROW>
 end
 
 if isempty(rows)
     fprintf('No recordings matched the subject/session filter.\n');
-    report = struct('rows', {rows}, 'todo', {todoList}, 'missing', {missList}, 'colLabels', {colLabels});
+    report = struct('rows', {rows}, 'todo', {todoList}, 'missing', {missList}, ...
+        'blockers', {blockList}, 'colLabels', {colLabels});
     return
 end
 
@@ -183,17 +268,29 @@ for i = 1:numel(rows)
     fprintf('\n');
 end
 
-%%% ---- Completeness by output ----
-fprintf('\n--- Completeness by output ---\n');
+%%% ---- Completeness ----
+fprintf('\n--- Completeness by file ---\n');
 for c = 1:nCol
     if ~active(c), continue, end
     s = cellfun(@(r) r.status(c), rows);
-    fprintf('  %-14s %3d / %3d present\n', colLabels{c}, sum(s == 1), numel(s));
+    fprintf('  %-14s %3d / %3d present%s\n', colLabels{c}, sum(s ~= 0), numel(s), ...
+        ternary(isInput(c), '   (input)', ''));
 end
 
-%%% ---- Files still to produce ----
-label = 'Missing files';
-if opts.refresh, label = 'Files a refresh run would (re)produce'; end
+%%% ---- Missing inputs ----
+if opts.checkinputs
+    fprintf('\n--- Missing INPUTS (%d) - these block the stages that need them ---\n', numel(blockList));
+    for i = 1:numel(blockList)
+        fprintf('  %s\n', blockList{i});
+    end
+    if isempty(blockList)
+        fprintf('  none - scoring, montage and leadfield resolve for every recording.\n');
+    end
+end
+
+%%% ---- Outputs still to produce ----
+label = 'Missing OUTPUTS';
+if opts.refresh, label = 'OUTPUTS a refresh run would (re)produce'; end
 fprintf('\n--- %s (%d) ---\n', label, numel(todoList));
 for i = 1:numel(todoList)
     fprintf('  %s\n', todoList{i});
@@ -222,21 +319,68 @@ if opts.plot
         opts.plotfile = fullfile(opts.figpath, 'prep_status_heatmap.png');
     end
     fig = plotStatusHeatmap(statusMat(:, showIdx), colLabels(showIdx), ...
-        cellfun(@(r) r.fileID, rows, 'uni', 0), opts.plotfile);
+        cellfun(@(r) r.fileID, rows, 'uni', 0), opts.plotfile, ...
+        nnz(isInput(showIdx)));
 end
 
 report = struct('table', T, 'rows', {rows}, 'todo', {todoList}, 'missing', {missList}, ...
-    'colLabels', {colLabels}, 'files', {filesEEG}, 'figure', fig);
+    'blockers', {blockList}, 'colLabels', {colLabels}, 'files', {filesEEG}, 'figure', fig);
 end
 
 % -------------------------------------------------------------------------
-function fig = plotStatusHeatmap(S, colLabels, fileIDs, savefile)
-% imagesc grid: rows = recordings, columns = one file per pipeline stage.
+function [pathOrWhere, ok] = resolveScoring(p, subDir, BIDS, opts, scoringfiles)
+% Sleep scoring, matched exactly as bidsfun_gedai does: collect the candidates, then
+% match on every entity in the EEG filename except acq. An empty scoringpath means the
+% scores sit beside the raw recording, so the collection happens per recording there.
+where = opts.scoringpath;
+if isempty(opts.scoringpath)
+    where = fullfile(BIDS.pth, subDir);
+    scoringfiles = gedai.collectScoringFiles(where);
+end
+f = gedai.matchScoringFile(p.entities, scoringfiles);
+ok = ~isempty(f);
+pathOrWhere = ternary(ok, f, sprintf('no scoring matched under %s', where));
+end
+
+% -------------------------------------------------------------------------
+function [pathOrWhere, ok] = resolveSfp(p, opts)
+% SFP montage, via the same study-dispatching resolver gedai.assignChanlocs calls. That
+% resolver errors outright on a subject name it cannot map to a study - caught here, since
+% one unknown study should report as a missing montage rather than abort the whole scan.
+try
+    f  = gedai.matchSfpFile(opts.sfppath, p.entities.sub, p.entities.ses);
+    ok = ~isempty(f);
+    pathOrWhere = ternary(ok, f, sprintf('no SFP matched for sub-%s ses-%s under %s', ...
+        p.entities.sub, p.entities.ses, opts.sfppath));
+catch ME
+    ok = false;
+    pathOrWhere = sprintf('SFP resolver failed: %s', ME.message);
+end
+end
+
+% -------------------------------------------------------------------------
+function [pathOrWhere, ok] = resolveLeadfield(p, opts)
+% Brainstorm headmodel, addressed the way gedai.loadrefcov addresses it: a folder is read
+% as <root>/sub-X/ses-Y/headmodel_surf_openmeeg.mat, anything else as the file itself.
+if isfolder(opts.leadfieldpath)
+    f = fullfile(opts.leadfieldpath, ['sub-' p.entities.sub], ['ses-' p.entities.ses], ...
+        'headmodel_surf_openmeeg.mat');
+else
+    f = opts.leadfieldpath;
+end
+ok = isfile(f);
+pathOrWhere = f;
+end
+
+% -------------------------------------------------------------------------
+function fig = plotStatusHeatmap(S, colLabels, fileIDs, savefile, nInputCols)
+% imagesc grid: rows = recordings, columns = one file per pipeline stage, with the
+% external inputs ruled off from the outputs the pipeline itself writes.
 %   0 missing (red) | 1 present (green) | NaN not checked (grey)
 nRow = size(S, 1);
 M = S;
-M(M == 2)     = 1;               % "stale" (refresh) shown the same as present
-M(isnan(M))   = -1;              % fold "not checked" into its own colour bin
+M(M == 2)   = 1;                 % "stale" (refresh) shown the same as present
+M(isnan(M)) = -1;                % fold "not checked" into its own colour bin
 
 fig = figure('Color', 'w', 'Name', 'prep status', ...
     'Position', [100 100 max(560, 90*numel(colLabels)+260) min(1100, 260+14*nRow)]);
@@ -265,17 +409,22 @@ else
     ax.YTickLabel = subj(ax.YTick);
 end
 
-%%% Grid lines between cells, and a heavier rule where a new participant starts
+%%% Grid lines between cells, a light rule where a new participant starts, and a heavier
+%%% one splitting the inputs off from the outputs.
 hold(ax, 'on');
 for x = 1.5:1:numel(colLabels)-0.5, xline(ax, x, 'Color', [1 1 1], 'LineWidth', 0.5); end
 for k = 2:numel(firstIdx)
     yline(ax, firstIdx(k) - 0.5, 'Color', [0.6 0.6 0.6 0.4], 'LineWidth', 0.75);
 end
+if nInputCols > 0 && nInputCols < numel(colLabels)
+    xline(ax, nInputCols + 0.5, 'Color', [0.15 0.15 0.15], 'LineWidth', 2);
+end
 hold(ax, 'off');
 
-nMiss = nnz(S == 0);
-title(ax, sprintf('Prep pipeline outputs  -  %d recordings, %d missing file(s)', ...
-    nRow, nMiss), 'Interpreter', 'none');
+nMissIn  = nnz(S(:, 1:nInputCols) == 0);
+nMissOut = nnz(S(:, nInputCols+1:end) == 0);
+title(ax, sprintf('Prep pipeline status  -  %d recordings, %d missing input(s), %d missing output(s)', ...
+    nRow, nMissIn, nMissOut), 'Interpreter', 'none');
 
 %%% Legend via dummy patches
 labels = {'missing', 'present', 'not checked'};
@@ -296,4 +445,9 @@ if ~isempty(savefile)
     end
     fprintf('\nHeatmap written to %s\n', savefile);
 end
+end
+
+% -------------------------------------------------------------------------
+function out = ternary(cond, a, b)
+if cond, out = a; else, out = b; end
 end
