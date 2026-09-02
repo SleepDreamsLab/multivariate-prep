@@ -62,6 +62,12 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %                     profile default on its first parfor; a positive integer sets it
 %                     explicitly. 'auto' only ever shrinks an existing pool, never grows
 %                     one, so a pool you opened deliberately is left as you set it.
+%   recordinggb       Size of one recording once loaded, in GB, used to decide how much
+%                     memory 'auto' must leave for the client. [] (default) measures it
+%                     from the first matching recording's BrainVision header, which
+%                     assumes the batch is homogeneous - set it explicitly for a mixed
+%                     batch, or when the raw file is not what the client ends up holding.
+%                     Ignored when poolworkers is 'off' or an explicit count.
 %
 %   EEG
 %   ---
@@ -123,6 +129,7 @@ arguments
 
     %--- Parallel pool ---
     opts.poolworkers = 'auto'
+    opts.recordinggb = []
 
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
@@ -197,7 +204,40 @@ end
 if ischar(opts.poolworkers) || isstring(opts.poolworkers)
     switch lower(string(opts.poolworkers))
         case "off",  nWorkers = [];
-        case "auto", nWorkers = gedai.autoPoolSize();
+        case "auto"
+            %%% What one recording costs the client is the thing the pool has to make
+            %%% room for, and it moves with channel count and sampling rate - a flat
+            %%% share of memory cannot see that. Measure it, then reserve roughly four
+            %%% times it: eval_clean holds both datasets and, once it has interpolated
+            %%% the dropped channels back in, a second copy of each.
+            if isempty(opts.recordinggb)
+                recGB = gedai.recordingSizeGB(filesEEG{1});
+            else
+                recGB = opts.recordinggb;
+            end
+            if isnan(recGB)
+                fprintf(['Could not measure recording size; sizing the pool on ' ...
+                         'available memory alone.\n']);
+                reserveGB = 0;
+            else
+                reserveGB = 4 * recGB + 4;
+                fprintf('Recording ~%.1f GB loaded; reserving %.0f GB for the client.\n', ...
+                    recGB, reserveGB);
+                %%% Worth saying out loud rather than silently dropping to one worker:
+                %%% if a single recording does not fit, no pool setting will save the
+                %%% batch and the failures will look like the pool's fault.
+                try
+                    availGB = memory().MemAvailableAllArrays / 2^30;
+                    if reserveGB > availGB
+                        warning('bidsfun_evalfigs:tightMemory', ...
+                            ['One recording needs about %.0f GB but only %.0f GB is ' ...
+                             'available. Expect Out of memory regardless of pool size.'], ...
+                            reserveGB, availGB);
+                    end
+                catch
+                end
+            end
+            nWorkers = gedai.autoPoolSize('ClientReserveGB', reserveGB);
         otherwise
             error('bidsfun_evalfigs:poolworkers', ...
                 'poolworkers must be ''auto'', ''off'', or a positive integer.');
@@ -435,3 +475,4 @@ if ~isempty(failures)
     fclose(fid);
 end
 end
+
