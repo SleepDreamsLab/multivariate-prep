@@ -66,7 +66,7 @@ function plotgednight(GED, EEG, scoring, opts)
 %                when one component dwarfs the rest, which is otherwise the case
 %                where none of the others can be read; 'linear' or 'log' to force.
 %   cmap         Colormap for the component maps and the heat strips: any
-%                colormap function name or an n-by-3 matrix. Default: 'hot'.
+%                colormap function name or an n-by-3 matrix. Default: 'turbo'.
 %   timeunit     'auto' (default), 'h', 'min' or 's' for the shared time axis.
 %   linewidth    Line width for traces and spectra. Default: 1.6.
 %   xwindow      Seconds of data to show at once. [] (default) fits the whole
@@ -96,11 +96,11 @@ arguments
     opts.epochlength (1,1) double {mustBePositive} = 30
     opts.keptepochs        double = []
     opts.acttype     (1,:) char {mustBeMember(opts.acttype, ...
-        {'signal', 'envelope', 'heat', 'line'})} = 'signal'
+        {'signal', 'envelope', 'heat'})} = 'signal'
     opts.smoothsec   (1,1) double {mustBePositive} = 5
     opts.freqlim           double = []
     opts.evalscale   (1,:) char {mustBeMember(opts.evalscale, {'auto', 'linear', 'log'})} = 'auto'
-    opts.cmap                     = 'hot'
+    opts.cmap                     = 'turbo'
     opts.timeunit    (1,:) char {mustBeMember(opts.timeunit, {'auto', 'h', 'min', 's'})} = 'auto'
     opts.linewidth   (1,1) double {mustBePositive} = 1.6
     opts.xwindow           double = []

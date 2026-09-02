@@ -35,7 +35,7 @@ function plotged(GED, opts)
 %              picked by eye (3.7). Overrides ncomps.
 %   freqlim    x-axis limits for the spectra, in Hz. Default: [0 min(45, srate/2)].
 %   cmap       Colormap for the component maps and heat strips: any colormap
-%              function name or an n-by-3 matrix. Default: 'hot'.
+%              function name or an n-by-3 matrix. Default: 'turbo'.
 %   acttype    How to draw each activation:
 %                'signal'    (default) the component time series itself, min/max
 %                            decimated so nothing is aliased away at screen
@@ -71,9 +71,9 @@ arguments
     opts.ncomps (1,1) double = 5
     opts.comps        double = []
     opts.freqlim      double = []
-    opts.cmap                = 'hot'
+    opts.cmap                = 'turbo'
     opts.acttype   (1,:) char {mustBeMember(opts.acttype, ...
-        {'signal', 'envelope', 'heat', 'line'})} = 'signal'
+        {'signal', 'envelope', 'heat'})} = 'signal'
     opts.showact   (1,1) logical = true
     opts.xwindow         double = []
     opts.maxpoints (1,1) double {mustBePositive} = 20000

@@ -10,7 +10,12 @@ function isheat = drawactivation(ax, tplot, x, srate, acttype, color, maxpoints,
 %           'envelope'  its smoothed absolute amplitude, as a line
 %           'heat'      the same envelope, as a colour strip
 %
-%   'line' is accepted as a deprecated alias for 'signal'.
+%   Decimation follows the view, not the recording. The full-resolution trace is
+%   kept on the axes and redrawn from it whenever the x limits change, so a
+%   window always gets the full maxpoints budget. Decimating once over the whole
+%   recording instead would leave a 30 s window holding only the handful of
+%   points that happened to fall inside it, and the min/max pairs of the
+%   decimator would then read as a spiky oscillation that is not in the data.
 
 arguments
     ax
@@ -23,44 +28,73 @@ arguments
     smoothsec (1,1) double = 5
 end
 
-if strcmp(acttype, 'line'), acttype = 'signal'; end     % pre-rename callers
-
 %%% Both non-raw modes show the same quantity - the smoothed absolute amplitude.
 %%% Across long recordings the raw trace collapses into a solid band, while its
 %%% envelope shows when the component actually switches on.
 isheat = strcmp(acttype, 'heat');
-switch acttype
-    case 'heat'
-        env      = envelope_(x, srate, smoothsec);
-        [td, yd] = binaverage(tplot, env, maxpoints);
-        imagesc(ax, td, [0 1], yd);
-        set(ax, 'YTick', []);
-        clim(ax, [0 prctileish(yd, 99)]);
+if isheat || strcmp(acttype, 'envelope')
+    y = movmean(abs(x), max(1, round(smoothsec * srate)));
+else
+    y = x;
+end
 
-    case 'envelope'
-        env      = envelope_(x, srate, smoothsec);
-        [td, yd] = minmaxdecimate(tplot, env, maxpoints);
-        plot(ax, td, yd, 'Color', color, 'LineWidth', 1.1);
-        axis(ax, 'tight');
+if isheat
+    [td, cd] = binaverage(tplot, y, maxpoints);
+    h = imagesc(ax, td, [0 1], cd);
+    set(ax, 'YTick', []);
+    %%% Colour limits are fixed to the whole recording, so scrolling does not
+    %%% silently rescale the colours under the reader.
+    clim(ax, [0 prctileish(y, 99)]);
+else
+    [td, yd] = minmaxdecimate(tplot, y, maxpoints);
+    h = plot(ax, td, yd, 'Color', color, 'LineWidth', 0.7 + 0.4 * strcmp(acttype, 'envelope'));
+    axis(ax, 'tight');
+    if strcmp(acttype, 'envelope')
         %%% An amplitude is measured from zero, so the axis starts there: with a
         %%% tight lower limit, ordinary ripple in a flat envelope would look like
         %%% a component switching on and off.
         ylim(ax, [0 max(max(yd) * 1.05, eps)]);
-
-    otherwise   % 'signal'
-        [td, yd] = minmaxdecimate(tplot, x, maxpoints);
-        plot(ax, td, yd, 'Color', color, 'LineWidth', 0.7);
-        axis(ax, 'tight');
+    end
 end
 box(ax, 'off');
+
+%%% Keep the full-resolution trace with the axes and re-decimate on every limit
+%%% change - from the scrollbar, from zooming, from panning alike.
+dt = 0;
+if numel(tplot) > 1, dt = tplot(2) - tplot(1); end
+setappdata(ax, 'gedTrace', struct('t0', tplot(1), 'dt', dt, 'n', numel(y), ...
+    'y', y, 'h', h, 'maxpoints', maxpoints, 'isheat', isheat));
+%%% The listener's lifetime is tied to the axes, so it needs no other owner.
+addlistener(ax, 'XLim', 'PostSet', @(~, ~) refreshtrace(ax));
 end
 
 % -------------------------------------------------------------------------
-function env = envelope_(x, srate, smoothsec)
-% Smoothed absolute amplitude. A moving average of |x| rather than a Hilbert
-% envelope, so no Signal Processing Toolbox is needed.
+function refreshtrace(ax)
+% Redraw the visible stretch at full detail.
 
-env = movmean(abs(x), max(1, round(smoothsec * srate)));
+d = getappdata(ax, 'gedTrace');
+if isempty(d) || ~isgraphics(d.h) || d.dt <= 0
+    return
+end
+
+%%% Samples are uniformly spaced, so the visible range is arithmetic - no search
+%%% over a multi-million-sample vector on every pan event.
+xl = xlim(ax);
+i1 = max(1,   floor((xl(1) - d.t0) / d.dt) + 1);
+i2 = min(d.n, ceil( (xl(2) - d.t0) / d.dt) + 1);
+if i2 - i1 < 2
+    return
+end
+
+idx = i1:i2;
+tv  = d.t0 + (idx - 1) * d.dt;
+if d.isheat
+    [td, cd] = binaverage(tv, d.y(idx), d.maxpoints);
+    set(d.h, 'XData', td, 'CData', cd);
+else
+    [td, yd] = minmaxdecimate(tv, d.y(idx), d.maxpoints);
+    set(d.h, 'XData', td, 'YData', yd);
+end
 end
 
 % -------------------------------------------------------------------------
