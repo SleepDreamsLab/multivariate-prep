@@ -43,7 +43,9 @@ function failures = bidsfun_gedai(BIDS, opts)
 %   second machine walking the same list skips whatever the first is busy with
 %   instead of duplicating it. The claim is released when the recording finishes,
 %   when it errors, and when the run is interrupted with Ctrl-C, so a failure never
-%   parks a recording permanently. See claimFile.
+%   parks a recording permanently. Claims are keyed by desc, so this stage never
+%   blocks a machine running a different stage (or a different desc) on the same
+%   recording. See claimFile.
 %
 %   uselocks          Claim each recording before processing it. Default: true.
 %                     Set false for a single-machine run over a local savepath.
@@ -192,7 +194,7 @@ for ifile = 1:numel(filesEEG)
     lockGuard = [];  %#ok<NASGU> release any claim still held from the previous iteration
     if opts.uselocks
         [lockGuard, acquired, holder] = claimFile( ...
-            fullfile(opts.lockpath, [fileID '.lock']), ...
+            fullfile(opts.lockpath, [fileID '_desc-' opts.geddesc '.lock']), ...
             'stalemin', opts.lockstalemin, 'heartbeatmin', opts.lockheartbeatmin); %#ok<ASGLU>
         if ~acquired
             fprintf('[skip] %s: claimed by %s (pid %d) since %s\n', ...

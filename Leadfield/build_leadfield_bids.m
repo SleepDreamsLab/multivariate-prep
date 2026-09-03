@@ -18,7 +18,10 @@ function build_leadfield_bids(bids, opts)
 %                    derives the search root from bids.pth per study:
 %                      'PM'   — fileparts(bids.pth)/Data_collection/... [VERIFY]
 %                      'DROP' — bids.pth/sourcedata/gps/.../solved/*.sfp,
-%                               then bids.pth/rawdata/<sub>/<ses>/eeg/*.sfp
+%                               then bids.pth/rawdata/<sub>/<ses>/eeg/*.sfp;
+%                               candidates naming a different ses-* are
+%                               rejected, so a session with no file is
+%                               skipped rather than given another's coords
 %                      other  — returns bids.pth/<sub>/<ses>/eeg/ so skip
 %                               messages show where to look
 %                    Supply your own to support a custom folder layout, e.g.:
@@ -30,10 +33,14 @@ function build_leadfield_bids(bids, opts)
 %   WarpTolerance    fraction of head points dropped as outliers before
 %                    scale warp; 0 = keep all; must be in [0,1)  (default 0)
 %   iWarpRefSession  1-based index of session driving the scale warp (default 1)
-%   ForceReprocess   reprocess subjects that already have BEM surfaces; when
-%                    false (default) such subjects are skipped; when true the
-%                    anatomy is reset to the template before re-warping so the
-%                    scale is not applied twice                   (default false)
+%   ForceReprocess   rebuild subjects from scratch: the anatomy is reset to the
+%                    template before re-warping so the scale is not applied
+%                    twice, and every head model is recomputed. When false
+%                    (default) a subject is skipped only once its BEM surfaces
+%                    AND a head model for every session exist; a subject with
+%                    BEM surfaces but missing head models is resumed — the warp
+%                    and BEM are left alone and only the missing sessions are
+%                    computed.                                    (default false)
 %   DoQC             save registration PNG figures               (default true)
 %   QCDir            output folder for QC images      (default <pwd>/QC_registration)
 
@@ -134,22 +141,45 @@ for p = 1:numel(uNames)
     end
     nSess = numel(sfpPath);
 
-    % Detect whether a prior run already completed warp + BEM for this subject.
-    % BEM surface filenames contain 'bem', making them a reliable proxy.
+    % Detect what a prior run already completed. The two products live at
+    % different levels: BEM surfaces are per-SUBJECT (they sit in the anatomy
+    % folder, shared by all sessions), head models are per-SESSION (one per
+    % study). So completion has to be judged per session — testing BEM alone
+    % skipped the whole subject as soon as the anatomy was built, even when
+    % individual sessions had no head model.
     [sSubjectPre, iSubjectPre] = bst_get('Subject', subjectName, 0);
     hasBEM = ~isempty(iSubjectPre) && iSubjectPre > 0 && ...
         ~isempty(sSubjectPre) && ~isempty(sSubjectPre.Surface) && ...
         any(contains({sSubjectPre.Surface.FileName}, 'bem'));
 
-    if hasBEM && ~opts.ForceReprocess
-        fprintf('[skip] %s: BEM surfaces already exist (set ForceReprocess=true to redo)\n', subjectName);
+    hasHM = false(nSess, 1);
+    if hasBEM
+        for s = 1:nSess
+            hasHM(s) = sessionHasHeadModel(subjectName, sessName{s});
+        end
+    end
+
+    if hasBEM && all(hasHM) && ~opts.ForceReprocess
+        fprintf('[skip] %s: BEM surfaces and all %d head model(s) already exist (set ForceReprocess=true to redo)\n', ...
+            subjectName, nSess);
         continue;
+    end
+
+    % Full build = import every session, warp the anatomy, regenerate BEM.
+    % Otherwise we are resuming: the anatomy is already warped and the BEM
+    % surfaces exist, only some sessions lack a head model. Re-warping without
+    % resetting to the template would apply the scale twice, so in resume mode
+    % reuse the anatomy on disk and compute only the missing head models.
+    doAnatomy = opts.ForceReprocess || ~hasBEM;
+    if ~doAnatomy
+        fprintf('[resume] %s: anatomy and BEM intact; computing %d missing head model(s): %s\n', ...
+            subjectName, sum(~hasHM), strjoin(sessName(~hasHM), ', '));
     end
 
     % Create subject if absent; guards re-runs without triggering dialogs.
     if isempty(iSubjectPre) || iSubjectPre == 0
         db_add_subject(subjectName, [], 1, 0);
-    elseif hasBEM
+    elseif hasBEM && doAnatomy
         % Force-reprocessing an already-warped subject: reset the anatomy back
         % to the template so bst_warp_prepare starts from unscaled surfaces.
         fprintf('[reset] %s: resetting anatomy to template before re-warp\n', subjectName);
@@ -162,25 +192,35 @@ for p = 1:numel(uNames)
     sessChan  = cell(nSess, 1);
     for s = 1:nSess
         iStudy = db_add_condition(subjectName, sessName{s});
-        % import_channel(iStudies, File, Format, ChannelReplace, ChannelAlign, isSave, isFixUnits, isApplyVox2ras)
-        import_channel(iStudy, sfpPath{s}, char(opts.SfpFormat), 2, 0, 1, 1, 0);
+        sStudy = bst_get('Study', iStudy);
 
-        sStudy      = bst_get('Study', iStudy);
+        % When resuming, an existing channel file has already been ICP-fitted
+        % against this anatomy; re-importing would discard that fit and re-run
+        % the alignment against the warped scalp. Only import when the session
+        % is new or the whole subject is being rebuilt.
+        isImport = doAnatomy || isempty(sStudy.Channel) || isempty(sStudy.Channel.FileName);
+        if isImport
+            % import_channel(iStudies, File, Format, ChannelReplace, ChannelAlign, isSave, isFixUnits, isApplyVox2ras)
+            import_channel(iStudy, sfpPath{s}, char(opts.SfpFormat), 2, 0, 1, 1, 0);
+            sStudy = bst_get('Study', iStudy);
+        end
         channelFile = sStudy.Channel.FileName;
 
-        % Rigid ICP refinement. Electrodes are NOT added as head points:
-        % bst_warp merges them internally; duplicating them breaks the
-        % warp's outlier-removal indexing.
-        channelMat = channel_align_auto(channelFile, [], 0, 0);
-        if ~isempty(channelMat)
-            bst_save(file_fullpath(channelFile), channelMat, 'v7');
+        if isImport
+            % Rigid ICP refinement. Electrodes are NOT added as head points:
+            % bst_warp merges them internally; duplicating them breaks the
+            % warp's outlier-removal indexing.
+            channelMat = channel_align_auto(channelFile, [], 0, 0);
+            if ~isempty(channelMat)
+                bst_save(file_fullpath(channelFile), channelMat, 'v7');
+            end
         end
 
         sessStudy(s) = iStudy;
         sessChan{s}  = channelFile;
 
         % QC 1: pre-warp electrode fit (green = close to scalp, red = far).
-        if opts.DoQC
+        if opts.DoQC && isImport
             hFig = channel_align_manual(channelFile, 'EEG', 0);
             for view = {'left', 'front', 'top'}
                 figure_3d('SetStandardView', hFig, view{1});
@@ -193,39 +233,71 @@ for p = 1:numel(uNames)
         end
     end
 
-    %% Scale-only warp of fsaverage to the reference session.
-    iRef    = min(opts.iWarpRefSession, nSess);
-    warpOpt = struct('isScaleOnly', 1, 'tolerance', opts.WarpTolerance, ...
-                     'isSurfaceOnly', 0, 'isInterp', 1, 'isInteractive', 0);
-    bst_warp_prepare(sessChan{iRef}, warpOpt);
-    db_save();
+    %% Scale-only warp of fsaverage, then BEM. Skipped when resuming: the
+    %% anatomy on disk is already warped and its BEM surfaces are intact.
+    if doAnatomy
+        iRef    = min(opts.iWarpRefSession, nSess);
+        warpOpt = struct('isScaleOnly', 1, 'tolerance', opts.WarpTolerance, ...
+                         'isSurfaceOnly', 0, 'isInterp', 1, 'isInteractive', 0);
+        bst_warp_prepare(sessChan{iRef}, warpOpt);
+        db_save();
 
-    % QC 2: post-warp electrode fit per session on the shared scaled scalp.
-    if opts.DoQC
-        sSubjQC   = bst_get('Subject', subjectName);
-        scalpFile = sSubjQC.Surface(sSubjQC.iScalp).FileName;
-        for s = 1:nSess
-            hFig = view_headpoints(sessChan{s}, scalpFile);
-            for view = {'left','front','top'}
-                figure_3d('SetStandardView', hFig, view{1});
-                drawnow;
-                qcFile = char(fullfile(opts.QCDir, sprintf('post_warp_%s_%s_%s.png', subjectName, sessName{s}, view{1})));
-                saveas(hFig, qcFile);
-                fprintf('[QC post-warp] %s\n', qcFile);
+        % QC 2: post-warp electrode fit per session on the shared scaled scalp.
+        if opts.DoQC
+            sSubjQC   = bst_get('Subject', subjectName);
+            scalpFile = sSubjQC.Surface(sSubjQC.iScalp).FileName;
+            for s = 1:nSess
+                hFig = view_headpoints(sessChan{s}, scalpFile);
+                for view = {'left','front','top'}
+                    figure_3d('SetStandardView', hFig, view{1});
+                    drawnow;
+                    qcFile = char(fullfile(opts.QCDir, sprintf('post_warp_%s_%s_%s.png', subjectName, sessName{s}, view{1})));
+                    saveas(hFig, qcFile);
+                    fprintf('[QC post-warp] %s\n', qcFile);
+                end
+                close(hFig);
             end
-            close(hFig);
         end
+
+        % Generate BEM surfaces on the scaled anatomy.
+        bst_process('CallProcess', 'process_generate_bem', [], [], ...
+            'subjectname', subjectName, ...
+            'nscalp', opts.nScalp, 'nouter', opts.nOuter, 'ninner', opts.nInner, ...
+            'thickness', 4, 'method', 'brainstorm');
+        db_save();
     end
 
-    %% Generate BEM surfaces on the scaled anatomy.
-    bst_process('CallProcess', 'process_generate_bem', [], [], ...
-        'subjectname', subjectName, ...
-        'nscalp', opts.nScalp, 'nouter', opts.nOuter, 'ninner', opts.nInner, ...
-        'thickness', 4, 'method', 'brainstorm');
-    db_save();
-
     %% Per-session: compute OpenMEEG head model and report Gain matrix size.
-    for s = 1:nSess
+    % Resume mode touches only the sessions still missing one.
+    iSessTodo = 1:nSess;
+    if ~doAnatomy
+        iSessTodo = find(~hasHM(:))';
+    end
+    for s = iSessTodo
+        % Any head model already in this folder is stale: either the BEM
+        % surfaces were just rebuilt under it, or it is a leftover. Brainstorm
+        % never overwrites — bst_headmodeler passes the output name through
+        % file_unique — so leaving the old file in place yields
+        % headmodel_surf_openmeeg_02.mat, _03.mat, ... Delete first so the
+        % recomputed model lands on the canonical filename.
+        % (No-op when resuming: those sessions have no head model by definition.)
+        [sStudyOld, iStudyOld] = bst_get('ChannelFile', sessChan{s});
+        if ~isempty(iStudyOld) && ~isempty(sStudyOld) && ~isempty(sStudyOld.HeadModel)
+            for h = 1:numel(sStudyOld.HeadModel)
+                oldFile = file_fullpath(sStudyOld.HeadModel(h).FileName);
+                if exist(oldFile, 'file')
+                    file_delete(oldFile, 1);
+                end
+            end
+            fprintf('[clean] %s / %s: removed %d stale head model(s)\n', ...
+                subjectName, sessName{s}, numel(sStudyOld.HeadModel));
+            sStudyOld.HeadModel  = repmat(db_template('HeadModel'), 0, 1);
+            sStudyOld.iHeadModel = [];
+            bst_set('Study', iStudyOld, sStudyOld);
+            db_save();
+        end
+
+        nRep = reportRowCount();
         bst_process('CallProcess', 'process_headmodel', [], [], ...
             'channelfile', sessChan{s}, ...
             'sourcespace', 1, 'meg', 1, 'eeg', 3, ...
@@ -236,6 +308,15 @@ for p = 1:numel(uNames)
         [sStudyHM, ~] = bst_get('ChannelFile', sessChan{s});
         if isempty(sStudyHM) || isempty(sStudyHM.iHeadModel)
             fprintf('[warn] %s / %s: head model missing after computation\n', subjectName, sessName{s});
+            % process_headmodel reports its reason to the Brainstorm report and
+            % returns silently; echo it so the console says why it gave up.
+            msgs = reportMessagesSince(nRep);
+            for m = 1:numel(msgs)
+                fprintf('        %s\n', msgs{m});
+            end
+            if isempty(msgs)
+                fprintf('        (no error recorded in the Brainstorm report)\n');
+            end
             continue;
         end
         headModelFile = sStudyHM.HeadModel(sStudyHM.iHeadModel).FileName;
@@ -250,6 +331,53 @@ bst_report('Export', reportFile, fullfile(pwd, 'leadfield_bids_report.html'));
 fprintf('Done. Report: %s\n', fullfile(pwd, 'leadfield_bids_report.html'));
 end
 
+
+% -------------------------------------------------------------------------
+function tf = sessionHasHeadModel(subjectName, sessName)
+% Does this session's study already hold a head model? Read-only lookup: it
+% must not create the condition, unlike db_add_condition.
+tf = false;
+sStudies = bst_get('StudyWithCondition', [subjectName '/' sessName]);
+for i = 1:numel(sStudies)
+    if ~isempty(sStudies(i).HeadModel)
+        tf = true;
+        return;
+    end
+end
+end
+
+% -------------------------------------------------------------------------
+function n = reportRowCount()
+% Current number of entries in the running Brainstorm process report.
+global GlobalData
+n = 0;
+try
+    n = size(GlobalData.ProcessReports.Reports, 1);
+catch
+end
+end
+
+% -------------------------------------------------------------------------
+function msgs = reportMessagesSince(nBefore)
+% Error/warning messages appended to the Brainstorm process report after row
+% nBefore. Column 1 is the entry type, column 4 the message text.
+global GlobalData
+msgs = {};
+try
+    R = GlobalData.ProcessReports.Reports;
+catch
+    return;
+end
+if isempty(R) || size(R, 2) < 4
+    return;
+end
+for i = (nBefore + 1):size(R, 1)
+    if any(strcmpi(R{i,1}, {'error', 'warning'}))
+        txt = strtrim(strrep(char(R{i,4}), char(10), ' | '));
+        msgs{end+1} = sprintf('%s: %s', upper(char(R{i,1})), txt);   %#ok<AGROW>
+    end
+end
+end
 
 % -------------------------------------------------------------------------
 function sfp = bidsToSfp(bidsPath, subjectName, sessName, studyId)
@@ -296,16 +424,33 @@ function sfp = sfpFromDrop(bidsPath, subjectName, sessName)
     solvedDir = fullfile(bidsPath, '..', 'sourcedata', 'gps', subjectName, 'solved');
     sessPat = ['*' sessName '*domesolved*.sfp'];
     d = dir(fullfile(solvedDir, sessPat));
-    if isempty(d), d = dir(fullfile(solvedDir, '*.sfp')); end
+    if isempty(d), d = dropForeignSessions(dir(fullfile(solvedDir, '*.sfp')), sessName); end
     if ~isempty(d)
         sfp = fullfile(d(1).folder, d(1).name);
         return;
     end
     eegDir = fullfile(bidsPath, 'rawdata', subjectName, sessName, 'eeg');
-    d = dir(fullfile(eegDir, '*.sfp'));
+    d = dropForeignSessions(dir(fullfile(eegDir, '*.sfp')), sessName);
     if ~isempty(d)
         sfp = fullfile(d(1).folder, d(1).name);
     else
         sfp = '';
     end
+end
+
+% -------------------------------------------------------------------------
+function d = dropForeignSessions(d, sessName)
+% Remove candidates whose filename carries a ses-* token for a *different*
+% session. Files with no session token are kept: some layouts store a single
+% .sfp per subject. Without this filter the wildcard fallback silently hands
+% a session whichever .sfp dir() happened to list first, which can be another
+% session's electrode positions.
+    keep = true(size(d));
+    for i = 1:numel(d)
+        tok = regexp(d(i).name, 'ses-[A-Za-z0-9]+', 'match');
+        if ~isempty(tok) && ~any(strcmpi(tok, sessName))
+            keep(i) = false;
+        end
+    end
+    d = d(keep);
 end

@@ -56,6 +56,24 @@ function failures = bidsfun_hp_zap_cleanline(BIDS, opts)
 %   subjectfilter   cell array of subject ID strings; {} = all subjects
 %   sessionfilter   cell array of session ID strings; {} = all sessions
 %
+% PARALLEL MACHINES:
+%   Several machines can be pointed at the same BIDS root and the same savepath at once.
+%   Each recording is claimed with a lock file before any work starts, so a second
+%   machine walking the same list skips whatever the first is busy with instead of
+%   duplicating it. The claim is released when the recording finishes, when it errors,
+%   and on Ctrl-C, so a failure never parks a recording permanently. Claims are keyed by
+%   desc, so this stage never blocks a machine running a different stage (e.g.
+%   bidsfun_detect_badchans, which writes into the same savepath) on the same recording.
+%   See claimFile.
+%
+%   uselocks        claim each recording before processing it     (default true)
+%   lockpath        directory holding the claim files             (default <savepath>/.locks)
+%   lockstalemin    minutes after which a claim whose heartbeat stopped is taken over -
+%                   the escape hatch for a machine that crashed or was rebooted
+%                   mid-recording. Keep it well above the longest plausible
+%                   single-recording runtime                      (default 360, i.e. 6 h)
+%   lockheartbeatmin  minutes between heartbeat writes on a held claim  (default 5)
+%
 % Methods section:
 %
 % Continuous EEG (256 channels, 250 Hz) was high-pass filtered to remove DC offset and then
@@ -101,6 +119,12 @@ arguments
     opts.desc             char    = 'filt'
     opts.savefileext      char    = '.set'
 
+    %--- Parallel machines ---
+    opts.uselocks (1,1) logical = true
+    opts.lockpath         char  = ''
+    opts.lockstalemin     (1,1) double {mustBePositive} = 360
+    opts.lockheartbeatmin (1,1) double {mustBePositive} = 5
+
     %--- EEG ---
     opts.tasklabel                       = {'Sleep', 'sleep'}
     opts.acqlabel   char                 = ''
@@ -139,6 +163,7 @@ fprintf('\n=== Running bidsfun_hp_zap_cleanline ===\n');
 
 if isempty(opts.savepath), opts.savepath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.figpath),  opts.figpath  = fullfile(BIDS.pth, 'derivatives', opts.derivfolder, 'figures'); end
+if isempty(opts.lockpath), opts.lockpath = fullfile(opts.savepath, '.locks'); end
 
 %%% Query EEG files
 filesEEG = bids.query(BIDS, 'data', 'extension', '.vhdr', ...
@@ -165,6 +190,9 @@ for ifile = 1:numel(filesEEG)
     end
     fprintf('\n=== %s ===\n', fileID)
     figsBefore = findall(0, 'Type', 'figure');
+
+    %%% Release any claim still held from the previous iteration (see the claim below)
+    lockGuard = [];  %#ok<NASGU>
     try
 
     %%% Build output paths
@@ -179,6 +207,30 @@ for ifile = 1:numel(filesEEG)
     if ~opts.refresh && isfile(outFile)
         fprintf('[File already exists] skipping\n')
         continue
+    end
+
+    %%% Claim this recording, so a second machine walking the same list moves on to the
+    %%% next one instead of redoing this. The lock file is created with an atomic
+    %%% create-if-absent, so two machines reaching this line together cannot both win.
+    %%% lockGuard holds the claim: it releases on success, on the error caught below, and
+    %%% on Ctrl-C or any error that unwinds out of this function, so a recording is never
+    %%% left claimed by a run that is no longer working on it. Hence the explicit clear at
+    %%% the end of the iteration - the claim must not outlive its recording.
+    if opts.uselocks
+        [lockGuard, acquired, holder] = claimFile( ...
+            fullfile(opts.lockpath, [fileID '_desc-' opts.desc '.lock']), ...
+            'stalemin', opts.lockstalemin, 'heartbeatmin', opts.lockheartbeatmin); %#ok<ASGLU>
+        if ~acquired
+            fprintf('[skip] claimed by %s (pid %d) since %s\n', ...
+                holder.host, holder.pid, holder.started)
+            continue
+        end
+        %%% Re-check now that the claim is ours: the other machine may have finished this
+        %%% recording and dropped its lock between our skip check above and here.
+        if ~opts.refresh && isfile(outFile)
+            fprintf('[File already exists] skipping\n')
+            continue
+        end
     end
 
     %%% Create output directory if needed
@@ -392,6 +444,11 @@ for ifile = 1:numel(filesEEG)
         close(figsNow(~ismember(figsNow, figsBefore)));
         failures{end+1} = struct('fileID', fileID, 'message', ME.message, 'report', ME.getReport()); %#ok<AGROW>
     end
+
+    %%% Drop the claim, whether the recording succeeded or failed. A failed recording has
+    %%% to become available again - it is exactly the one another machine (or a later run
+    %%% of this one) should be free to retry.
+    clear lockGuard
 end
 
 %%% Failure summary

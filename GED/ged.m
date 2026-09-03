@@ -117,8 +117,12 @@ function GED = ged(data, opts)
 %                 held-out fold. Default: 0 (off).
 %   plot          Draw the diagnostic figure - eigenspectrum, maps and component
 %                 spectra for the first components (3.7, Fig. 4). Always look at
-%                 this before trusting the top component. Default: false.
-%   verbose       Print a summary. Default: true.
+%                 this before trusting the top component. Default: false. Call
+%                 plotged(GED) to draw it again later, e.g. for a GED struct
+%                 stored by bidsfun_subcomp, which never plots on its own.
+%   verbose       Print a summary, including how long each stage took and, for
+%                 the permutation loop, a running estimate of the time left.
+%                 Default: true.
 %
 %   Output
 %   ------
@@ -136,6 +140,12 @@ function GED = ged(data, opts)
 %   GED.cv           .lambda (components x folds), .mapcorr, .nfolds
 %   GED.diagnostics  ranks, condition numbers, trace ratio, dropped segments,
 %                    whether the solution was complex.
+%   GED.timing       seconds spent in each stage: .covariance, .solve,
+%                    .components, .permutation, .crossvalidation, .total.
+%                    Stages that did not run are 0. Useful for finding the
+%                    slow one before reaching for a faster machine - on long
+%                    recordings it is normally the permutation loop, and
+%                    everything else is noise beside it.
 %   GED.info         Everything that was asked for, plus srate, labels, chanlocs.
 %   GED.apply        Function handle projecting new data: comp = GED.apply(X).
 %
@@ -209,6 +219,10 @@ arguments
 end
 
 %% ------------------------------------------------------------------ the data
+tAll   = tic;
+timing = struct('covariance', 0, 'solve', 0, 'components', 0, ...
+                'permutation', 0, 'crossvalidation', 0, 'total', 0);
+
 [X, srate, times, chanlocs, labels] = unpack(data, opts);
 X = normalisechannels(X, opts.channorm);
 [nchan, npnts, ntrials] = size(X, 1, 2, 3);
@@ -223,7 +237,11 @@ end
 %%% covariances, one per data segment. Keeping the segments instead of a single
 %%% pooled matrix is what makes outlier cleaning, permutation testing and
 %%% cross-validation possible further down (3.3, 2.4).
+tStage     = tic;
 segsamples = max(2, round(opts.segdur * srate));
+if opts.verbose
+    fprintf('Building S and R covariance matrices...\n');
+end
 switch opts.contrast
     case 'spectral'
         checkcyclesperseg(opts, srate, ntrials, npnts, segsamples);
@@ -307,6 +325,12 @@ end
 S = normalisecov(mean(covS, 3), opts.covnorm);
 R = normalisecov(mean(covR, 3), opts.covnorm);
 
+timing.covariance = toc(tStage);
+if opts.verbose
+    fprintf('  %d S and %d R segment covariances in %s\n', ...
+        size(covS, 3), size(covR, 3), secs2str(timing.covariance));
+end
+
 %% -------------------------------------------------------------- conditioning
 diagnostics = struct( ...
     'rankS',      rank(S), ...
@@ -340,7 +364,15 @@ end
 Rreg = shrink(R, opts.shrinkage);
 
 %% ----------------------------------------------------------------- the solve
+if opts.verbose
+    fprintf('Solving generalized eigendecomposition (%d x %d)...\n', size(S, 1), size(S, 1));
+end
+tStage = tic;
 [W, L] = eig(S, Rreg);
+timing.solve = toc(tStage);
+if opts.verbose
+    fprintf('  solved in %s\n', secs2str(timing.solve));
+end
 evals  = diag(L);
 
 %%% Complex solutions (3.8). R\S is not symmetric, so complex conjugate pairs can
@@ -385,6 +417,7 @@ if opts.signfix
 end
 
 %% ---------------------------------------------------- component time series
+tStage = tic;
 ncomps = min(opts.ncomps, size(W, 2));
 if isempty(opts.applyto)
     projdata = X;
@@ -398,6 +431,10 @@ end
 comp = project(projdata, W(:, 1:ncomps));
 if opts.zscorecomp
     comp = (comp - mean(comp, 2)) ./ std(comp, 0, 2);
+end
+timing.components = toc(tStage);
+if opts.verbose
+    fprintf('Projected %d component time series in %s\n', ncomps, secs2str(timing.components));
 end
 
 %% ------------------------------------------------------ inferential statistics
@@ -413,10 +450,13 @@ if opts.nperm > 0
                  'permuted ones are not centred on the same value. Set covnorm to ''trace'' (2.4).'], ...
                 diagnostics.traceratio);
         end
-        perm = permutetest(covS, covR, V, opts);
+        tStage = tic;
+        perm   = permutetest(covS, covR, V, opts);
+        timing.permutation = toc(tStage);
         if opts.verbose
-            fprintf('Permutation (%d iterations): critical lambda = %.3f, %d/%d components at p < .05\n', ...
-                opts.nperm, perm.crit95, nnz(perm.p < 0.05), numel(perm.p));
+            fprintf('Permutation (%d iterations, %s): critical lambda = %.3f, %d/%d components at p < .05\n', ...
+                opts.nperm, secs2str(timing.permutation), perm.crit95, ...
+                nnz(perm.p < 0.05), numel(perm.p));
         end
     end
 end
@@ -427,10 +467,13 @@ if opts.cvfolds > 1
         warning('ged:noCrossvalidation', ...
             'Cross-validation needs the segment covariances, which the cov contrast does not provide.');
     else
-        cv = crossvalidate(covS, covR, V, maps, opts, ncomps);
+        tStage = tic;
+        cv     = crossvalidate(covS, covR, V, maps, opts, ncomps);
+        timing.crossvalidation = toc(tStage);
         if opts.verbose
-            fprintf('Cross-validation (%d folds): held-out lambda of component 1 = %.3f (SD %.3f)\n', ...
-                cv.nfolds, mean(cv.lambda(1, :)), std(cv.lambda(1, :)));
+            fprintf('Cross-validation (%d folds, %s): held-out lambda of component 1 = %.3f (SD %.3f)\n', ...
+                cv.nfolds, secs2str(timing.crossvalidation), ...
+                mean(cv.lambda(1, :)), std(cv.lambda(1, :)));
         end
     end
 end
@@ -449,6 +492,8 @@ GED.covR        = covR;
 GED.perm        = perm;
 GED.cv          = cv;
 GED.diagnostics = diagnostics;
+timing.total    = toc(tAll);
+GED.timing      = timing;
 GED.info          = opts;
 GED.info.srate    = srate;
 GED.info.labels   = labels;
@@ -459,12 +504,13 @@ if opts.verbose
     fprintf('Rank S/R: %d/%d of %d. Condition number of R: %.3g. trace(S)/trace(R) = %.3g\n', ...
         diagnostics.rankS, diagnostics.rankR, nchan, diagnostics.condR, diagnostics.traceratio);
     fprintf('Top eigenvalues: %s\n', num2str(evals(1:min(5, end))', '%.3f  '));
+    fprintf('Total time %s (%s)\n', secs2str(timing.total), timingbreakdown(timing));
     fprintf(['[remember] the largest eigenvalue separates S from R best mathematically, not\n' ...
              '           necessarily physiologically - look at the maps before committing (3.7).\n']);
 end
 
 if opts.plot
-    plotdiagnostics(GED, srate, ncomps);
+    plotged(GED, 'ncomps', ncomps);
 end
 end
 
@@ -708,12 +754,31 @@ pool = cat(3, covS, covR);
 nS   = size(covS, 3);
 nAll = size(pool, 3);
 
+if opts.verbose
+    fprintf('Running %d permutations\n', opts.nperm);
+end
+progressstep = max(1, round(opts.nperm / 10));
+tLoop   = tic;
 maxnull = zeros(opts.nperm, 1);
 for p = 1:opts.nperm
     shuffled = randperm(nAll);
     Sp = V' * normalisecov(mean(pool(:, :, shuffled(1:nS)),       3), opts.covnorm) * V;
     Rp = V' * normalisecov(mean(pool(:, :, shuffled(nS + 1:end)), 3), opts.covnorm) * V;
     maxnull(p) = max(real(eig(Sp, shrink(Rp, opts.shrinkage))));
+    %%% One line per checkpoint rather than a \r-updated one: this routine is
+    %%% usually running inside a batch log, where a carriage return leaves an
+    %%% unreadable mess. The estimate is a flat extrapolation of the mean
+    %%% iteration so far, which is close enough - every iteration does the
+    %%% same amount of work.
+    if opts.verbose && (mod(p, progressstep) == 0 || p == opts.nperm)
+        elapsed = toc(tLoop);
+        if p < opts.nperm
+            fprintf('  %3d%% (%s elapsed, ~%s left)\n', round(100 * p / opts.nperm), ...
+                secs2str(elapsed), secs2str(elapsed * (opts.nperm - p) / p));
+        else
+            fprintf('  %3d%% (%s)\n', 100, secs2str(elapsed));
+        end
+    end
 end
 
 %%% The observed eigenvalues are recomputed here in exactly the same way, so that
@@ -745,6 +810,9 @@ lambda  = nan(ncomps, k);
 mapcorr = nan(ncomps, k);
 
 for f = 1:k
+    if opts.verbose
+        fprintf('  Cross-validation fold %d/%d...\n', f, k);
+    end
     Str = normalisecov(mean(covS(:, :, foldS ~= f), 3), opts.covnorm);
     Rtr = normalisecov(mean(covR(:, :, foldR ~= f), 3), opts.covnorm);
     Ste = normalisecov(mean(covS(:, :, foldS == f), 3), opts.covnorm);
@@ -779,6 +847,46 @@ r = (a' * b) / (norm(a) * norm(b));
 end
 
 % -------------------------------------------------------------------------
+function s = secs2str(t)
+% Durations in whatever unit reads naturally, so that a 40 ms solve and a
+% 20 minute permutation loop are both legible at a glance.
+
+if ~isfinite(t) || t < 0
+    s = '?';
+elseif t < 5e-4
+    s = '<1 ms';          % rounding this to "0 ms" reads like a failure to run
+elseif t < 1
+    s = sprintf('%.0f ms', t * 1000);
+elseif t < 60
+    s = sprintf('%.1f s', t);
+elseif t < 3600
+    s = sprintf('%d min %02.0f s', floor(t / 60), mod(t, 60));
+else
+    s = sprintf('%d h %02d min', floor(t / 3600), floor(mod(t, 3600) / 60));
+end
+end
+
+% -------------------------------------------------------------------------
+function s = timingbreakdown(timing)
+% The per-stage split for the closing summary, naming only the stages that
+% actually ran, so that a plain GED does not report five zeros.
+
+fields = {'covariance', 'solve', 'components', 'permutation', 'crossvalidation'};
+names  = {'cov',        'solve', 'comp',       'perm',        'cv'};
+parts  = {};
+for k = 1:numel(fields)
+    if timing.(fields{k}) > 0
+        parts{end+1} = sprintf('%s %s', names{k}, secs2str(timing.(fields{k}))); %#ok<AGROW>
+    end
+end
+if isempty(parts)
+    s = 'no timed stages';
+else
+    s = strjoin(parts, ', ');
+end
+end
+
+% -------------------------------------------------------------------------
 function v = percentile(x, p)
 % Linear-interpolation percentile, so that no toolbox is needed.
 
@@ -791,64 +899,5 @@ hi  = min(max(ceil(pos),  1), n);
 v   = x(lo) + (pos - floor(pos)) * (x(hi) - x(lo));
 end
 
-% -------------------------------------------------------------------------
-function plotdiagnostics(GED, srate, ncomps)
-% The figure to look at before picking a component (3.7, Fig. 4): eigenspectrum,
-% component maps, and the spectrum of each component time series.
-
-nshow = min(ncomps, 5);
-figure('Color', 'w', 'Name', 'GED diagnostics', 'NumberTitle', 'off');
-tiledlayout(3, nshow, 'TileSpacing', 'compact', 'Padding', 'compact');
-
-%%% Eigenspectrum. The elbow says how many directions actually separate S from R;
-%%% the dashed line is the permutation threshold, when one was computed.
-nexttile([1 nshow]);
-nspec = min(numel(GED.evals), 20);
-plot(1:nspec, GED.evals(1:nspec), 'ks-', 'MarkerFaceColor', 'k'); hold on
-if ~isnan(GED.perm.crit95)
-    yline(GED.perm.crit95, 'r--', 'p < .05');
-end
-xlabel('Component'); ylabel('\lambda (S:R ratio)'); title('Eigenspectrum'); box off
-
-hastopo = exist('topoplot', 'file') == 2 && ~isempty(GED.info.chanlocs);
-for c = 1:nshow
-    nexttile;
-    if hastopo
-        topoplot(GED.maps(:, c), GED.info.chanlocs, 'electrodes', 'off', 'numcontour', 0);
-    else
-        bar(GED.maps(:, c), 'k'); axis tight; box off
-    end
-    title(sprintf('#%d, \\lambda = %.2f', c, GED.evals(c)));
-end
-
-for c = 1:nshow
-    nexttile;
-    [pxx, hz] = compspectrum(GED.comp(c, :), srate);
-    plot(hz, 10 * log10(pxx), 'k'); xlim([0 min(45, srate / 2)]);
-    xlabel('Hz');
-    if c == 1, ylabel('Power (dB)'); end
-    box off
-end
-end
-
-function [pxx, hz] = compspectrum(x, srate)
-% Welch spectrum of a component time series, with a plain-MATLAB fallback for
-% installations without the Signal Processing Toolbox.
-
-x   = x(:);
-win = min(numel(x), round(4 * srate));
-if exist('pwelch', 'file') == 2
-    [pxx, hz] = pwelch(x, hann(win), [], [], srate);
-    return
-end
-nseg  = max(1, floor(numel(x) / win));
-taper = 0.5 - 0.5 * cos(2 * pi * (0:win - 1)' / win);
-pxx   = zeros(floor(win / 2) + 1, 1);
-for s = 1:nseg
-    seg = x((s - 1) * win + (1:win)) .* taper;
-    amp = abs(fft(seg)).^2;
-    pxx = pxx + amp(1:floor(win / 2) + 1);
-end
-pxx = pxx / (nseg * srate * sum(taper.^2));
-hz  = linspace(0, srate / 2, numel(pxx))';
-end
+%%% The diagnostic figure itself lives in plotged.m, so it can be called again
+%%% later on any stored GED struct (ged.m calls it above when 'plot' is true).

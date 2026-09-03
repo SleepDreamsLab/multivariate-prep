@@ -139,6 +139,12 @@ if size(PwrClean, 3) ~= numel(stageScoring)
     warning('Sleep scoring vector length does not match # epochs');
 end
 
+%%% --- Figures ---
+%%% The order of the blocks below is the order the PNGs land on disk, and
+%%% gedai.lastEvalFigure mirrors it so callers can tell a finished recording from one
+%%% that merely started. Adding, moving or renaming a plot here means updating that
+%%% table too, or resume checks will key on the wrong file.
+
 %%% --- Figures (no FOOOF) ---
 if opts.PlotCharacteristics
     % etc field capitalization varies by GEDAI version; try both, swallow the one that doesn't exist
