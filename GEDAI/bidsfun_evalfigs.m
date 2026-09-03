@@ -16,11 +16,17 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %   derivpath         Root of the derivative files being compared.
 %                     Default: <BIDS root>/derivatives/prep-ged
 %   afterdesc         desc label of the "after" file, and of the figure folder.
-%                     Default: 'filt'
+%                     Default: 'filt'. When no _eeg file carries this desc but a
+%                     <fileID>_desc-<afterdesc>_ica.mat does, the stage switches to
+%                     ICA mode - see below.
 %   beforedesc        desc label of the "before" file. '' (default) uses the raw BIDS
 %                     recording; set it to compare two derivatives - e.g. beforedesc the
 %                     filtered data and afterdesc the GEDAI output, which reproduces what
 %                     bidsfun_gedai plots internally.
+%   preferstatus      ICA mode only: take the artefact flags from the _iclabels.tsv
+%                     `status` column rather than from the .mat's gcompreject. The .tsv
+%                     is the file meant to be hand-screened, so that is the default here
+%                     (true), matching bidsfun_subcomp. See loadica.
 %   avgrefbefore      average-reference the "before" recording before plotting. Match the
 %                     stage being reproduced: bidsfun_gedai re-references before GEDAI,
 %                     bidsfun_hp_zap_cleanline does not. Default: false
@@ -28,6 +34,19 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %   scoringpath       Directory containing sleep-scoring files.
 %                     Default: <BIDS root>/derivatives/scoring/scores/Manual_Checked
 %   sfppath           Path passed to the SFP resolver. Default: <BIDS root>
+%
+%   ICA mode
+%   --------
+%   When afterdesc names an ICA decomposition (a run-pamica.py _ica.mat) rather than a
+%   second EEG derivative, there is no "after" recording on disk: what is being evaluated
+%   is the subtraction itself. The "after" dataset is then the "before" one with the
+%   ICLabel-flagged components subtracted - loadica to attach the decomposition,
+%   pop_subcomp to remove their back-projection, exactly as bidsfun_subcomp does it - so
+%   the figures show what removing those components did and nothing else. Point beforedesc
+%   at the derivative AMICA was actually fitted on: the decomposition only cleans the
+%   channels it was fitted with, and any channel it never saw is carried through untouched
+%   (warned about, not an error). An _eeg file wins over an _ica.mat of the same desc, so
+%   an existing call never changes behaviour.
 %
 %   Output paths
 %   ------------
@@ -68,6 +87,13 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %                     assumes the batch is homogeneous - set it explicitly for a mixed
 %                     batch, or when the raw file is not what the client ends up holding.
 %                     Ignored when poolworkers is 'off' or an explicit count.
+%   poolidletimeout   Minutes the pool is kept alive with no parfor running. The
+%                     profile default is 30, which is shorter than the figure-rendering
+%                     stretch that separates opening the pool from FOOOF actually using
+%                     it, so the pool is reaped mid-recording and FOOOF silently rebuilds
+%                     one at the profile default size. Keep this above the longest
+%                     plausible load-to-FOOOF gap. Default: 240 (4 h). Only ever raises
+%                     an existing pool's timeout, never lowers it.
 %
 %   EEG
 %   ---
@@ -99,6 +125,21 @@ function failures = bidsfun_evalfigs(BIDS, opts)
 %   All default true except PlotTopoBandPower, PlotEpochOverlay,
 %   PlotExponentByStage, PlotSlopesTimecourse, which default false.
 %   See run.eval_clean for what each plot shows.
+%
+%   Plot (drawn here, not by run.eval_clean)
+%   ----------------------------------------
+%   PlotICOverview    One page showing the first 40 independent components -
+%                     topography, spectrum and whole-night spectrogram each, with
+%                     the ICLabel class in the title. See evalplots.ic_overview.
+%                     Default: true, and silently skipped for a recording that
+%                     carries no decomposition, so it costs nothing outside ICA
+%                     mode. It is drawn here rather than from run.eval_clean
+%                     because eval_clean never sees a decomposition: in ICA mode
+%                     the components are subtracted before it is called and the
+%                     fields cleared, and it interpolates dropped channels back
+%                     in, which would no longer match icachansind. Being outside
+%                     eval_clean it is also outside gedai.lastEvalFigure's write
+%                     order, so it never serves as the resume sentinel.
 
 arguments
     BIDS
@@ -112,6 +153,7 @@ arguments
     opts.beforedesc       char = ''
     opts.beforefileext    char = '.set'
     opts.afterfileext     char = '.set'
+    opts.preferstatus (1,1) logical = true
     opts.avgrefbefore (1,1) logical = false
     opts.avgrefafter  (1,1) logical = false
     opts.scoringpath      char = []
@@ -130,6 +172,7 @@ arguments
     %--- Parallel pool ---
     opts.poolworkers = 'auto'
     opts.recordinggb = []
+    opts.poolidletimeout (1,1) double {mustBePositive} = 240
 
     %--- EEG ---
     opts.tasklabel                      = {'Sleep', 'sleep'}
@@ -161,6 +204,9 @@ arguments
     opts.PlotTimefreq         (1,1) logical = true
     opts.PlotExponentByStage  (1,1) logical = false
     opts.PlotSlopesTimecourse (1,1) logical = false
+
+    %--- Plot (drawn here) ---
+    opts.PlotICOverview       (1,1) logical = false
 end
 
 fprintf('\n=== Running bidsfun_evalfigs ===\n');
@@ -254,14 +300,27 @@ if ~isempty(nWorkers)
         pool = gcp('nocreate');
         if isempty(pool)
             fprintf('Opening parallel pool with %d worker(s).\n', nWorkers);
-            parpool('Processes', nWorkers);
+            pool = parpool('Processes', nWorkers);
         elseif pool.NumWorkers > nWorkers
             fprintf('Resizing parallel pool from %d to %d worker(s).\n', ...
                 pool.NumWorkers, nWorkers);
             delete(pool);
-            parpool('Processes', nWorkers);
+            pool = parpool('Processes', nWorkers);
         else
             fprintf('Reusing parallel pool (%d worker(s)).\n', pool.NumWorkers);
+        end
+        %%% The pool is opened here but the only thing that ever touches it is FOOOF,
+        %%% which run.eval_clean runs last - after two recordings are loaded off the
+        %%% share, interpolated, Welched, and six figure blocks are rendered. That
+        %%% stretch is comfortably longer than the profile's 30 min IdleTimeout, so the
+        %%% pool gets reaped mid-recording ("IdleTimeout has been reached") and the
+        %%% parfor in oscip.fit_fooof_multidimentional_matlab then opens one of its own
+        %%% at the profile default - one worker per core, which is exactly the pool
+        %%% sizing above trying and failing to have an effect. Hold it open across the
+        %%% quiet part instead, the same way cleanline_fast does through Zapline.
+        try
+            pool.IdleTimeout = max(pool.IdleTimeout, opts.poolidletimeout);
+        catch
         end
     catch ME
         %%% No Parallel Computing Toolbox, or the pool refused to start. FOOOF still
@@ -337,13 +396,31 @@ for ifile = 1:numel(filesEEG)
 
     try
 
-        %%% Resolve "after" file
+        %%% Resolve "after" file. afterdesc usually names a second EEG derivative, but it
+        %%% can just as well name an ICA decomposition - and then the "after" recording is
+        %%% not a file at all: it is the "before" one with the flagged components taken
+        %%% out. Deciding between the two on what is actually on disk leaves the caller's
+        %%% side unchanged - point afterdesc at the desc to be evaluated either way - and
+        %%% preferring the _eeg file means a desc that happens to have both keeps doing
+        %%% what it did before.
         afterFile = fullfile(opts.derivpath, subDir, [fileID '_desc-' opts.afterdesc '_eeg' opts.afterfileext]);
-        if ~isfile(afterFile)
+        icaFile   = fullfile(opts.derivpath, subDir, [fileID '_desc-' opts.afterdesc '_ica.mat']);
+        useICA    = ~isfile(afterFile) && isfile(icaFile);
+        if ~isfile(afterFile) && ~useICA
             fprintf('[skip] after file not found: %s\n', afterFile)
             continue
         end
-        fprintf('Raw    → %s\nAfter  → %s\n', rawFile, afterFile)
+        if useICA
+            fprintf('Raw    → %s\nAfter  → %s (component subtraction)\n', rawFile, icaFile)
+        else
+            fprintf('Raw    → %s\nAfter  → %s\n', rawFile, afterFile)
+        end
+
+        %%% Figure folder, made here rather than just before run.eval_clean: the IC
+        %%% overview below is written earlier than that, while the decomposition is
+        %%% still attached, and needs somewhere to put its PNG.
+        figDir = fullfile(opts.figpath, ['desc-' opts.afterdesc], subDir);
+        if ~exist(figDir, 'dir'), mkdir(figDir); end
 
         %%% Find and load scoring
         if isempty(opts.scoringpath)
@@ -390,12 +467,67 @@ for ifile = 1:numel(filesEEG)
         EEGraw = gedai.assignChanlocs(EEGraw, BIDS, opts.sfppath, rawFile, p, fileID);
         
         %%% Import "after" EEG
-        fprintf('Importing after EEG ...\n')
-        EEGafter = fast_eeg_import(afterFile);
-        if opts.targetchannelcount < EEGafter.nbchan        
-            EEGafter = pop_select(EEGafter, 'nochannel', intersect(1:EEGafter.nbchan, opts.noteegchannels));
+        if useICA
+            %%% ICA mode: nothing to import. The "after" dataset is this same recording
+            %%% with the ICLabel-flagged components subtracted, built the way
+            %%% bidsfun_subcomp builds it. Copied from EEGraw once it has its channel
+            %%% selection and chanlocs, so both datasets carry the same channels and the
+            %%% labels loadica matches on are in place - and copied before the
+            %%% average-reference block below, so the components come off data on the
+            %%% same scale AMICA was fitted on.
+            fprintf('Building after EEG by component subtraction ...\n')
+            EEGafter = loadica(EEGraw, icaFile, 'preferstatus', opts.preferstatus, 'checkset', false);
+            if ~isfield(EEGafter, 'reject') || ~isfield(EEGafter.reject, 'gcompreject') ...
+                    || isempty(EEGafter.reject.gcompreject)
+                error('bidsfun_evalfigs:noFlags', ...
+                    '%s has no artefact flags - run ICLabel first.', icaFile);
+            end
+            badComps = find(EEGafter.reject.gcompreject);
+            fprintf('Subtracting %d/%d components: %s\n', ...
+                numel(badComps), size(EEGafter.icaweights, 1), mat2str(badComps));
+
+            %%% pop_subcomp only rewrites the channels the decomposition was fitted with;
+            %%% anything AMICA never saw passes through untouched and shows up in the
+            %%% figures as a channel the subtraction did nothing to. Worth saying out
+            %%% loud, because the usual cause is a "before" recording that is not the
+            %%% derivative AMICA ran on - the raw BIDS file, say, still carrying the bad
+            %%% channels that were dropped before the decomposition.
+            if numel(EEGafter.icachansind) < EEGafter.nbchan
+                warning('bidsfun_evalfigs:partialICA', ...
+                    ['The decomposition covers %d of this recording''s %d channels; the ' ...
+                     'other %d are left uncleaned. Is beforedesc the input AMICA ran on?'], ...
+                    numel(EEGafter.icachansind), EEGafter.nbchan, ...
+                    EEGafter.nbchan - numel(EEGafter.icachansind));
+            end
+
+            %%% The IC overview goes here and nowhere later: this is the only point
+            %%% at which the decomposition and the data it was fitted on exist
+            %%% together - pop_subcomp rewrites the data just below and the ICA fields
+            %%% are dropped right after it. It is also before the average-referencing
+            %%% block, so the activations come off the data AMICA actually saw.
+            icOverview(EEGafter, opts, figDir, fileID);
+
+            if ~isempty(badComps)
+                EEGafter = pop_subcomp(EEGafter, badComps, 0);
+            end
+
+            %%% The decomposition no longer describes the data - drop it so nothing
+            %%% downstream subtracts a second time; keep a record of what was removed.
+            EEGafter.etc.ic_subtraction = struct('icaFile', icaFile, 'removed', badComps);
+            [EEGafter.icaweights, EEGafter.icasphere, EEGafter.icawinv, ...
+                EEGafter.icachansind, EEGafter.icaact] = deal([]);
+        else
+            fprintf('Importing after EEG ...\n')
+            EEGafter = fast_eeg_import(afterFile);
+            if opts.targetchannelcount < EEGafter.nbchan
+                EEGafter = pop_select(EEGafter, 'nochannel', intersect(1:EEGafter.nbchan, opts.noteegchannels));
+            end
+            EEGafter = gedai.assignChanlocs(EEGafter, BIDS, opts.sfppath, rawFile, p, fileID);
+            %%% An ordinary derivative usually carries no decomposition, in which case
+            %%% this returns without drawing anything - but a .set saved with one gets
+            %%% the same page, for free.
+            icOverview(EEGafter, opts, figDir, fileID);
         end
-        EEGafter = gedai.assignChanlocs(EEGafter, BIDS, opts.sfppath, rawFile, p, fileID);
 
         % %%% Removed channels
         % removed_channels = true(numel(EEGafter.urchanlocs), 1);
@@ -421,9 +553,6 @@ for ifile = 1:numel(filesEEG)
         epochsToPlot = gedai.resolveEpochsToPlot(opts.epochstoplot, scoringDigits);
 
         %%% Evaluate
-        figDir = fullfile(opts.figpath, ['desc-' opts.afterdesc], subDir);
-        if ~exist(figDir, 'dir'), mkdir(figDir); end
-
         run.eval_clean(EEGraw, EEGafter, scoringDigits, ...
             'EpochLength', opts.epochlength, 'WelchWindow', 4, ...
             'SavePath', fullfile(figDir, fileID), ...
@@ -473,6 +602,35 @@ if ~isempty(failures)
     fid = fopen(fullfile(opts.figpath, 'failed_files_evalfilt.json'), 'w');
     fprintf(fid, '%s', jsonencode([failures{:}], 'PrettyPrint', true));
     fclose(fid);
+end
+end
+
+% -------------------------------------------------------------------------
+function icOverview(EEG, opts, figDir, fileID)
+% Draw evalplots.ic_overview for EEG, when there is a decomposition to draw.
+%
+% Does nothing for a recording without one, so neither call site has to know which
+% mode it is in. Failures are warned about rather than thrown: this runs before
+% run.eval_clean, and a figure that could not be drawn is no reason to throw away
+% the whole evaluation of the recording behind it.
+
+if ~opts.PlotICOverview, return; end
+if ~isfield(EEG, 'icaweights') || isempty(EEG.icaweights) ...
+        || ~isfield(EEG, 'icawinv') || isempty(EEG.icawinv)
+    return
+end
+
+try
+    fig = evalplots.ic_overview(EEG, ...
+        'Title', sprintf('%s - independent components', fileID), ...
+        'SavePath', fullfile(figDir, fileID));
+    %%% Closed here rather than left to the loop's close all force: run.eval_clean
+    %%% still has a whole recording to get through after this, and forty
+    %%% spectrograms' worth of graphics objects is memory it is going to want.
+    if isgraphics(fig), close(fig); end
+catch ME
+    warning('bidsfun_evalfigs:icOverview', ...
+        'Could not draw the IC overview for %s (%s); continuing.', fileID, ME.message);
 end
 end
 

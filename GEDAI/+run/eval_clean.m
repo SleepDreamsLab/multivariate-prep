@@ -145,8 +145,15 @@ end
 %%% that merely started. Adding, moving or renaming a plot here means updating that
 %%% table too, or resume checks will key on the wrong file.
 
-%%% --- Figures (no FOOOF) ---
+%%% Between the last Welch line and the first saved PNG this function used to print
+%%% nothing, so a stage that spends half an hour in here looks indistinguishable from one
+%%% that has hung - and on a machine with no GPU that is exactly what happens: MATLAB
+%%% falls back to SwiftShader, a CPU rasteriser, and the transparent per-epoch and
+%%% per-channel line spaghetti below is blended pixel by pixel on the client. Naming and
+%%% timing each block turns an unexplained stall into a number. Check which path a machine
+%%% is on with rendererinfo(gca).
 if opts.PlotCharacteristics
+    t = blockStart('gedai_characteristics');
     % etc field capitalization varies by GEDAI version; try both, swallow the one that doesn't exist
     try
         gedai.evalplots.gedai_characteristics(EEGclean.etc.GEDAI, 'Srate', EEGclean.srate, 'SavePath', opts.SavePath);
@@ -154,34 +161,46 @@ if opts.PlotCharacteristics
     try
         gedai.evalplots.gedai_characteristics(EEGclean.etc.gedai, 'Srate', EEGclean.srate, 'SavePath', opts.SavePath);
     end
+    blockDone('gedai_characteristics', t);
 end
 
 if opts.PlotPsdPerStage
+    t = blockStart('psd_per_stage');
     evalplots.psd_per_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
         'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
+    blockDone('psd_per_stage', t);
 end
 
 if opts.PlotPsdPerStageChans
+    t = blockStart('psd_per_stage_chans');
     evalplots.psd_per_stage_chans(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
         'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
+    blockDone('psd_per_stage_chans', t);
 end
 
 if opts.PlotPsdOverview
+    t = blockStart('psd_overview');
     evalplots.psd_overview(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
         'FreqLim', opts.FreqLim, 'FreqScale', opts.FreqScale, 'SavePath', opts.SavePath);
+    blockDone('psd_overview', t);
 end
 
 if opts.PlotTopoBandPower
+    t = blockStart('topo_band_power');
     evalplots.topo_band_power(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
         EEGraw.chanlocs, 'CLims', opts.TopoBandLims, 'SavePath', opts.SavePath);
+    blockDone('topo_band_power', t);
 end
 
 if opts.PlotTopoBandStage
+    t = blockStart('topo_band_stage');
     evalplots.topo_band_stage(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, ...
         EEGclean.chanlocs, 'SavePath', opts.SavePath);
+    blockDone('topo_band_stage', t);
 end
 
 if opts.PlotEpochOverlay
+    t = blockStart('epoch_overlay');
     %%% --- Append EOG + EMG channels for epoch overlay ---
     EEGclean    = chans1020(EEGclean, 0, 'add_eog', 1, 'net', opts.net);
     EEGraw      = chans1020(EEGraw, 0, 'add_eog', 1, 'net', opts.net);
@@ -189,6 +208,7 @@ if opts.PlotEpochOverlay
     evalplots.epoch_overlay(EEGraw, EEGclean, stageScoring(1:30/opts.EpochLength:end), ...
         'EpochLength', 30, 'EpochsToPlot', opts.EpochsToPlot, ...
         'SavePath', opts.SavePath);
+    blockDone('epoch_overlay', t);
 end
 
 %%% --- FOOOF: only run if a FOOOF-dependent plot is requested ---
@@ -261,6 +281,7 @@ if needFooof
 
     %%% --- Figures (FOOOF) ---
     if opts.PlotTimefreq
+        t = blockStart('timefreq');
         saveSuffix = [opts.SavePath '_' frTag]; % last range in the loop (broadest)
         evalplots.timefreq(PwrClean, PwrRaw, FreqsClean, FreqsRaw, stageScoring, FzIdx, ...
             'ChanLabel', goodLabels{FzIdx}, ...
@@ -269,16 +290,30 @@ if needFooof
             'ExponentsRaw',   FooofRaw.Exponents, ...
             'FooofLabel', frLabel, ...
             'SavePath', saveSuffix);
+        blockDone('timefreq', t);
     end
 
     if opts.PlotExponentByStage
+        t = blockStart('exponent_by_stage');
         evalplots.exponent_by_stage(slopesClean, slopesRaw, stageScoring, ...
             'FooofLabel', frLabels, 'SavePath', opts.SavePath);
+        blockDone('exponent_by_stage', t);
     end
 
     if opts.PlotSlopesTimecourse
+        t = blockStart('slopes_timecourse');
         evalplots.slopes_timecourse(slopesRaw, slopesClean, fooofRanges, stageScoring, ...
             'EpochLength', opts.EpochLength, 'SavePath', opts.SavePath);
+        blockDone('slopes_timecourse', t);
     end
 end
+end
+
+function t = blockStart(name)
+fprintf('gedai.eval_clean: %s ...\n', name);
+t = tic;
+end
+
+function blockDone(name, t)
+fprintf('gedai.eval_clean: %s took %.0fs\n', name, toc(t));
 end
