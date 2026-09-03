@@ -19,6 +19,20 @@ switch lower(ext)
         fprintf('--> Relabeled scoring map\n')
         tabulate(scoringDigits)
 
+    case '.txt'
+        % Plain-text scoring: whitespace-separated columns, one row per
+        % epoch. Column 1 = stage code, column 2 = unused/unknown (always
+        % 0 in observed files) and is discarded.
+        Scoring         = readmatrix(filename, 'FileType', 'text');
+        scoringDigits   = Scoring(:,1);
+
+        fprintf('\nOriginal scoring map\n')
+        tabulate(scoringDigits)
+        [tf, idx] = ismember(scoringDigits, scoremap.From);
+        scoringDigits(tf) = scoremap.To(idx(tf));
+        fprintf('--> Relabeled scoring map\n')
+        tabulate(scoringDigits)
+
     case '.json'
         % Scoringhero
         Scoring       = jsondecode(fileread(filename));

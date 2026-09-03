@@ -21,7 +21,7 @@ acqlabel        = '250Hz';    % acqlabel of EEG file, leave '' if not used
 refresh         = false; % re-run when outputs already exist
 refreshFigures  = false; % re-run when figures alreaady exist
 targetsrate     = 250;   % down-sample to this srate
-removeDC        = false; % apply 0.1 Hz high-pass filter?
+removeDC        = true; % apply 0.1 Hz high-pass filter?
 derivfolder     = 'prep-zc-ged'; % name of output folder within derivatives folder
 scoringpath     = fullfile(BIDS.pth, 'derivatives', 'scoring'); % where to find scoring files
 leadfieldpath   = fullfile(home, 'VS03-SandD-3', 'KCs', 'Data_BIDS', 'derivatives', 'Brainstorm_db', 'KCs', 'data'); % where to find leadfield matrices
@@ -34,8 +34,8 @@ filtdesc    = 'hpzc';    % zc:  zapline-plus & cleanline
 geddesc     = 'hpzcged'; % ged: gedai 
 
 % Subejct and Session filter
-subjects    = {};   % {'sub-drop0001', '...'} or {} to run on all subjects
-sessions    = {}; % {'ses-t1', '...'} or {} to run on all sessions
+subjects    = {'sub-H011'};   % {'sub-drop0001', '...'} or {} to run on all subjects
+sessions    = {'ses-sa1','ses-sa2'}; % {'ses-t1', '...'} or {} to run on all sessions
 
 
 
