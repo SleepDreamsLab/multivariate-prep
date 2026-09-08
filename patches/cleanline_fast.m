@@ -171,27 +171,51 @@ if ~isempty(pool) && contains(class(pool), 'ThreadPool')
     pool = [];
 end
 if isempty(pool)
+    % Worker count: budget it against free RAM, do NOT take the profile default. A bare
+    % parpool opens one worker per core; each is a separate MATLAB process, and the
+    % client is meanwhile holding the whole recording plus, per round, three more copies
+    % of perRound*blocksize channels as double (chunk, in, out). One-worker-per-core is
+    % exactly what runs a 64 GB machine out of memory in this stage ("Out of Memory
+    % during deserialization"). gedai.autoPoolSize scales the count to the machine and
+    % caps by cores; ClientReserveGB is what the client needs live at peak - the
+    % resident recording (~half of dataGB once it is back to single) plus the per-round
+    % copies. If autoPoolSize is not on the path (cleanline plugin used outside this
+    % repo) nAsk stays [] and the bare request is used.
+    nAsk = [];
     try
-        pool = parpool;
+        dataGB = numel(EEG.data) * 8 / 2^30;            % recording as double
+        nAsk   = gedai.autoPoolSize('MemoryPerWorkerGB', 2.5, ...
+                                    'ClientReserveGB',   1.5 * dataGB + 6);
+    catch
+    end
+    try
+        if isempty(nAsk)
+            pool = parpool;
+        else
+            fprintf('cleanline_fast: opening pool with %d memory-budgeted worker(s).\n', nAsk);
+            pool = parpool('Processes', nAsk);
+        end
         % The next recording spends ~18 min in Zapline with no parfor in sight, which is
         % long enough for the default IdleTimeout to reap this pool; the stage after it
-        % then pays the startup again. Repeated 30-worker startup and teardown is also
-        % what precedes the failures where only some workers ever connect, so keep the
-        % pool alive across recordings instead of rebuilding it for each one.
+        % then pays the startup again. Repeated startup and teardown is also what precedes
+        % the failures where only some workers ever connect, so keep the pool alive across
+        % recordings instead of rebuilding it for each one.
         try
             pool.IdleTimeout = max(pool.IdleTimeout, 240);
         catch
         end
     catch ME
-        % No Parallel Computing Toolbox, or the pool would not come up - asking for the
-        % machine's full worker count, parpool can sit at "Connected to 27 of 30 workers"
-        % for twenty minutes and then give up. Half a pool beats the serial fallback,
-        % which for 250 channels is the difference between minutes and hours.
+        % No Parallel Computing Toolbox, or the pool would not come up at that size -
+        % parpool can sit at "Connected to 27 of 30 workers" for twenty minutes and then
+        % give up. Half a pool (never more than the budget above) beats the serial
+        % fallback, which for 250 channels is the difference between minutes and hours.
         fprintf('cleanline_fast: parpool failed (%s); retrying with fewer workers.\n', ...
             ME.message);
         try
-            cl   = parcluster;
-            pool = parpool(cl, max(4, floor(cl.NumWorkers / 2)));
+            cl        = parcluster;
+            fallbackN = max(2, floor(cl.NumWorkers / 2));
+            if ~isempty(nAsk), fallbackN = min(fallbackN, nAsk); end
+            pool = parpool(cl, fallbackN);
         catch ME2
             fprintf('cleanline_fast: still no pool (%s); running serially.\n', ME2.message);
             pool = [];

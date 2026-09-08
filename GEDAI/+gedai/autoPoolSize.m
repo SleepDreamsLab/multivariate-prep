@@ -56,13 +56,20 @@ catch
     %%% No Parallel Computing Toolbox, or no such profile - the core cap stands alone.
 end
 
-%%% Memory term. Skipped rather than guessed when memory() is unavailable, so a platform
-%%% that cannot report leaves the core cap in charge instead of silently returning 1.
+%%% Memory term. Skipped rather than guessed when nothing can report available RAM, so a
+%%% platform that cannot answer leaves the core cap in charge instead of silently
+%%% returning 1.
 availableGB = NaN;
 try
     m = memory;
     availableGB = m.MemAvailableAllArrays / 2^30;
 catch
+    %%% memory() is Windows-only; utils.freemem asks the OS directly on Linux/macOS.
+    try
+        fb = utils.freemem();
+        if ~isnan(fb), availableGB = fb / 2^30; end
+    catch
+    end
 end
 
 if isnan(availableGB)
