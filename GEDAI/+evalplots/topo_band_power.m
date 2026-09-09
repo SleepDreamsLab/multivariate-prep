@@ -169,4 +169,5 @@ end
 set(gcf, 'Color', 'w');
 
 save_fig(fig, opts.SavePath, 'topo_band_power');
+close(fig);
 end

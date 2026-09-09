@@ -164,6 +164,7 @@ for iDs = 1:2
 
     set(fig, 'Color', 'w');
     save_fig(fig, opts.SavePath, suffix);
+    close(fig);
 end
 
 warning(warnState);

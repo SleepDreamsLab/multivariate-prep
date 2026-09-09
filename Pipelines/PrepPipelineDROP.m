@@ -38,11 +38,6 @@ icadesc     = 'pamica';  % run-pamica.py's OUT_DESC, i.e. the desc on its *_ica.
 subjects    = {};   % {'sub-drop0001', '...'} or {} to run on all subjects
 sessions    = {};   % {'ses-t1', '...'} or {} to run on all sessions
 
-
-
-%%% --- PIPELINE START --- %%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 % Universal default parameters
 defaults = [];
 defaults.subjectfilter  = subjects;
@@ -52,8 +47,13 @@ defaults.acqlabel       = acqlabel;
 defaults.refresh        = refresh;
 defaults = namedargs2cell(defaults);
 
+
+
+%%% --- PIPELINE START --- %%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 % %%% Step #0 -> Build leadfield matrices
-% build_leadfield_bids(BIDS, 'ProtocolName', 'DROP_Leadfields2', 'ForceReprocess', refresh, ...
+% fails.leadfield = bidsfun_build_leadfield(BIDS, 'ProtocolName', 'DROP_Leadfields2', 'ForceReprocess', refresh, ...
 %     'SubjectFilter', subjects, 'QCDir', fullfile(BIDS.pth, 'derivatives\leadfields\figures\electrode-headmodel-fit'))
 
 %%% Step #1 -> Detect flat and bad channels
@@ -138,3 +138,13 @@ out = bidsfun_check_outputs(BIDS, defaults{:}, ...
     'leadfieldpath', leadfieldpath, ...    
     'scoringpath', scoringpath ...        
     );
+fprintf('\nFiles without scoring\n'); fprintf('%s\n', out.table.fileID(~out.table.scoring))
+fprintf('\nFiles without SFP\n'); fprintf('%s\n', out.table.fileID(~out.table.sfp))
+fprintf('\nFiles without leadfield\n'); fprintf('%s\n', out.table.fileID(~out.table.leadfield))
+
+
+report= check_leadfield_sfp(BIDS, leadfieldpath);
+report(report.geometryMismatch, {'subject','session'})
+
+unique(report.subject(report.geometryMismatch))
+{'sub-drop0004', 'sub-drop0007', 'sub-drop0055', 'sub-drop0056'}

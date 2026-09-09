@@ -95,4 +95,5 @@ end
 linkaxes(findobj(fig, 'Type', 'axes'), 'x');
 
 save_fig(fig, opts.SavePath, 'slopes_timecourse');
+close(fig);
 end

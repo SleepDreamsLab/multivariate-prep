@@ -182,4 +182,5 @@ title('ENOVA per epoch', 'FontSize', 11, 'FontWeight', 'bold');
 ylim([0 1]); grid on; set(ax, 'GridAlpha', 0.15, 'GridLineStyle', ':', 'XGrid', 'off');
 
 save_fig(fig, opts.SavePath, 'gedai_characteristics');
+close(fig);
 end

@@ -80,4 +80,5 @@ for iScale = 1:nScales
 end
 
 save_fig(fig, opts.SavePath, 'psd_overview');
+close(fig);
 end
