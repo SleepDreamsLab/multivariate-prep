@@ -50,9 +50,9 @@ SUBJECTS      = None # ["drop0001"]  # None = all subjects
 SESSIONS      = None  # None # ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
 
-REFRESH_PAMICA = True  # True = refit and overwrite even if <mat_stem>.mat already exists
+REFRESH_PAMICA = False  # True = refit and overwrite even if <mat_stem>.mat already exists
                         # (both skip-checks in run_amica() respect this)
-REFRESH_ICLABEL = True  # True = relabel and overwrite even if <stem>_iclabels.tsv already exists
+REFRESH_ICLABEL = False  # True = relabel and overwrite even if <stem>_iclabels.tsv already exists
 
 # One recording failing must not take the batch down with it -- a diverging AMICA fit
 # roughly 20 subjects into an overnight run used to abort every recording after it.
