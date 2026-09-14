@@ -57,6 +57,12 @@ arguments
     opts.ICAtype                     = 'none'
     opts.GEDAIEnovaChannelThreshold = Inf;
     opts.PoolType {mustBeMember(opts.PoolType, {'Processes', 'Threads'})} = 'Processes'
+    %%% Per-band overrides handed straight to GEDAI, which merges them into its
+    %%% gedai_band_opts. This is the only route to the windowed-threshold settings
+    %%% (thresh_window_aggregate, thresh_window_recalibrate, thresh_window_min_epochs,
+    %%% thresh_window_max_epochs) because everything else in GEDAI's signature is
+    %%% positional. See the opts documentation in gedai_band_stream.
+    opts.BandOpts (1,1) struct = struct()
 end
 
 if ~iscell(SleepStages)
@@ -251,7 +257,7 @@ for iGroup = 1:nGroups
         artifact_threshold_per_band, mean_ENOVA, ENOVA_per_epoch] = ...
         GEDAI(EEGstageGroup, gedaiMode, gedaiModeBB, opts.GEDAIEpochSize, ...
               opts.GEDAILowCutOffFreq, gedaiRefMatrix, 'blocks', 0, [], opts.GEDAIEnovaChannelThreshold, [], ...
-              opts.MovAvgSize, opts.BBEpochSize, opts.BroadbandOnly, opts.PercentileThreshold, opts.BBMinThreshold, opts.ComputeSENSAI);
+              opts.MovAvgSize, opts.BBEpochSize, opts.BroadbandOnly, opts.PercentileThreshold, opts.BBMinThreshold, opts.ComputeSENSAI, [], opts.BandOpts);
     gedaiTime = gedaiTime + toc(D);
 
     % Store per-group metrics

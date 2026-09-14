@@ -72,6 +72,34 @@ function failures = bidsfun_gedai(BIDS, opts)
 %   GEDAI
 %   -----
 %   runmode           'StageSpecific', 'StateWise', or 'WholeNight'. Default: 'StageSpecific'.
+%   thresholdwindow   Seconds over which GEDAI re-optimises its artefact threshold.
+%                     Inf (default) = one threshold per band per recording, which is
+%                     what makes WholeNight a compromise: SENSAI's optimum is genuinely
+%                     stage-dependent (broadband, one night: 1.6 in N3, 3.4 in N2, 4.4 in
+%                     REM, 9.9 in wake), and one unit of threshold moves the eigenvalue
+%                     cut by a factor of e. A finite value (300 works well) optimises per
+%                     sliding window instead, so the operating point follows the data
+%                     rather than the hypnogram - the point being that WholeNight then
+%                     needs no per-stage settings, and the scoring cannot leak into the
+%                     cleaned signal. Only meaningful with runmode 'WholeNight'; under
+%                     StageSpecific the stage split already does this, coarsely.
+%   bandopts          Struct of per-band GEDAI overrides, forwarded to gedai_band_opts.
+%                     When thresholdwindow is finite this defaults to
+%                     thresh_window_aggregate = 'min' and thresh_window_recalibrate =
+%                     true, which are NOT GEDAI's own defaults - see the note where they
+%                     are set below. Pass either field explicitly to override.
+%                       thresh_window_aggregate  'mean' (GEDAI's own default: a 3-window
+%                          moving average) or 'min'. 'mean' spreads each window's
+%                          influence over ~2 window lengths, which at a stage boundary
+%                          is a smooth RAMP of cleaning strength - the worst shape if
+%                          the transition itself is what you are analysing, since a
+%                          ramp mimics a physiological gradient. 'min' takes the
+%                          gentlest neighbouring window instead, so sleep's operating
+%                          point extends into the first wake window rather than the
+%                          reverse. Errs towards under-cleaned wake, which is visible,
+%                          instead of removed slow waves, which are not recoverable.
+%                     Also accepts thresh_window_recalibrate, thresh_window_min_epochs
+%                     and thresh_window_max_epochs; see gedai_band_stream.
 %   epochlength       Sleep-epoch length in seconds. Default: 30.
 %   runs              Cell array of GEDAI run-config structs. Default: gedai.defaultRuns().
 %   epochstoplot      Epoch indices for diagnostic figures. Default: auto.
@@ -135,9 +163,31 @@ arguments
     opts.evalplots (1,1) logical = true
     opts.dilaten (1,1) double {mustBeInteger, mustBeNonnegative} = 1
     opts.dilatedirection {mustBeMember(opts.dilatedirection, {'both','forward','backward'})} = 'forward'
+    opts.thresholdwindow (1,1) double {mustBePositive} = Inf
+    opts.bandopts (1,1) struct = struct()
 end
 
 fprintf('\n=== Running bidsfun_gedai ===\n');
+
+%%% Transition-safe defaults whenever a sliding threshold is asked for.
+%%%
+%%% GEDAI's own defaults ('mean' aggregation, no recalibration) are kept in the library,
+%%% but they are the wrong ones for sleep: measured over 16 genuine sleep->wake
+%%% transitions, 'mean' retained 0.296 of the input's delta 90 s before the first wake
+%%% epoch, against 0.563 for stage-specific cleaning - i.e. the sliding threshold ends up
+%%% WORSE than what it replaces exactly at the stage boundaries. 'min' plus the
+%%% recalibration brings that to 0.564 and beats stage-specific at every lag, at the cost
+%%% of ~40 % more residual wake variance (109 vs 77 uV^2, against 11173 in the input -
+%%% both remove ~99 % of it). Silently getting the bad one is the worse failure, so the
+%%% pipeline picks the safe one and leaves it overridable.
+if ~isinf(opts.thresholdwindow)
+    if ~isfield(opts.bandopts, 'thresh_window_aggregate')
+        opts.bandopts.thresh_window_aggregate = 'min';
+    end
+    if ~isfield(opts.bandopts, 'thresh_window_recalibrate')
+        opts.bandopts.thresh_window_recalibrate = true;
+    end
+end
 
 if isempty(opts.inputpath), opts.inputpath = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
 if isempty(opts.savepath),  opts.savepath  = fullfile(BIDS.pth, 'derivatives', opts.derivfolder); end
@@ -367,6 +417,8 @@ for ifile = 1:numel(filesEEG)
                 'ComputeSENSAI',              r.computeSENSAI, ...
                 'ICAtype',                    r.ICAtype, ...
                 'PoolType',                   opts.pooltype, ...
+                'MovAvgSize',                 opts.thresholdwindow, ...
+                'BandOpts',                   opts.bandopts, ...
                 'RefCOV',                     refCOV_perStage), ...
                 gedaiDatFile, opts.refresh, {'EEGgedai', '', '', ''});
             KeepTime.GEDAI = toc(D);
@@ -380,6 +432,14 @@ for ifile = 1:numel(filesEEG)
                 rJson.GEDAIModeBB_resolved = GEDAIModeBB_perStage;
                 rJson.StageDilation = struct('n', opts.dilaten, ...
                     'direction', opts.dilatedirection, 'nEpochsRelabelled', nDilated);
+                rJson.ThresholdWindow = opts.thresholdwindow;
+                rJson.RunMode = opts.runmode;
+                %%% The per-band overrides change what gets removed (the plausibility
+                %%% floor especially), so a run is not reproducible from the sidecar
+                %%% without them. Recorded after the transition-safe defaults above have
+                %%% been filled in, so the JSON shows what actually ran rather than what
+                %%% the caller happened to type.
+                rJson.BandOpts = opts.bandopts;
                 sidecarjson(KeepTime, ...
                     fullfile(gedaiRunDir, [bvBase '.json']), ...
                     struct('GEDAIParameters', rJson));

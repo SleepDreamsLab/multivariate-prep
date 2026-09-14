@@ -504,7 +504,10 @@ for ifile = 1:numel(filesEEG)
         %%% ---- Outputs ----
         if ~isfolder(outDir), mkdir(outDir); end
         metrics = vertcat(metricTables{:});
-        allEvents = vertcat(eventTables{:});
+        %%% vertcat({}) collapses to [] (double), not an empty table - writetable chokes on
+        %%% that. Happens whenever opts.conditions injects nothing (e.g. {'null'} alone).
+        allEvents = table();
+        if ~isempty(eventTables), allEvents = vertcat(eventTables{:}); end
         eventScores = table();
         if ~isempty(scoreTables), eventScores = vertcat(scoreTables{:}); end
 
