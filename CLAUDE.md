@@ -62,7 +62,7 @@ Typical tasks: bug fixes, performance optimisation, reducing RAM use, new featur
   input and output paths.
 
 ## Git
-- Commit when a change looks final. **Never push.** Ask before creating a branch.
+- Build a new worktree for your work. Commit when a change looks final. **Never push.** Ask before creating a new branch.
 - Editing sibling repos (`../GEDAI-master`, `../pAMICA`, `../eeg-oscillations`, etc.) is allowed when needed. Put fixes
   to third-party EEGLAB-ecosystem functions in `patches/` rather than the upstream checkout.
 
