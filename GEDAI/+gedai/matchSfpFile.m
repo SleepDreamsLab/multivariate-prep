@@ -15,6 +15,8 @@ function sfp = matchSfpFile(bidsPath, subjectName, sessName)
         sfp = sfpFromPM(bidsPath, subjectName, sessName);
     elseif contains(subjectName, 'DROP', 'IgnoreCase', true)
         sfp = sfpFromDrop(bidsPath, subjectName, sessName);
+    elseif contains(subjectName, 'H', 'IgnoreCase', true)
+        sfp = sfpFromKC(bidsPath, subjectName, sessName);
     else
         error('gedai:matchSfpFile:unknownStudy', ...
             'Cannot determine study from subject name "%s". Expected "PM" or "DROP".', subjectName);
@@ -76,4 +78,26 @@ function sfp = pickOne(d, subjectName, ses)
             '%d SFP files match sub-%s ses-%s; using "%s". Others: %s', ...
             numel(d), subjectName, ses, d(1).name, strjoin({d(2:end).name}, ', '));
     end
+end
+
+% -------------------------------------------------------------------------
+function sfp = sfpFromKC(bidsPath, subjectName, sessName)
+% KC: Move up from Data_BIDS to study root (KCs), then into Data_collection
+    studyRoot = fileparts(bidsPath); 
+    collRoot  = fullfile(studyRoot, 'Data_collection');
+
+    % Clean 'sub-' prefix (e.g., 'sub-H011' -> 'H011')
+    lab = erase(subjectName, 'sub-');
+
+    % Map BIDS session name to experiment folder (e.g., 'ses-sa1' -> 'E1')
+    sesNum = regexp(sessName, '\d+$', 'match', 'once');
+    expFolder = sprintf('E%s', sesNum);
+
+    subCollDir = sprintf('%s_KC_AM', lab);
+    gpsDir = fullfile(collRoot, subCollDir, 'serial_awakening', expFolder, 'GPS', 'preprocessed', 'calibrated');
+
+    sfp = '';
+    d = dir(fullfile(gpsDir, '*coordinates*.sfp'));
+    if isempty(d), d = dir(fullfile(gpsDir, '*.sfp')); end
+    if ~isempty(d), sfp = fullfile(d(1).folder, d(1).name); end
 end
