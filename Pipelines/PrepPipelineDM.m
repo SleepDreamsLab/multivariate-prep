@@ -56,7 +56,7 @@ defaults = namedargs2cell(defaults);
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % %%% Step #0 -> Build leadfield matrices
-% build_leadfield_bids(BIDS, 'ProtocolName', 'DROP_Leadfields2', 'ForceReprocess', refresh, ...
+% bidsfun_build_leadfield(BIDS, 'ProtocolName', 'DROP_Leadfields2', 'ForceReprocess', refresh, ...
 %     'QCDir', fullfile(BIDS.pth, 'derivatives\leadfields\figures\electrode-headmodel-fit'))
 
 %%% Step #1 -> Detect flat and bad channels

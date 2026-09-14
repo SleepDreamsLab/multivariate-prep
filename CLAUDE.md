@@ -47,7 +47,16 @@ Typical tasks: bug fixes, performance optimisation, reducing RAM use, new featur
 ## Testing
 - **Test only on `sub-drop0001`, `ses-t1`.** Agents may not access other subjects' files. Run the relevant stage with
   `'subjectfilter', {'sub-drop0001'}, 'sessionfilter', {'ses-t1'}`. Write test outputs to a separate `derivfolder`
-  (e.g. `prep-test`) so production derivatives aren't overwritten, unless told otherwise.
+  (e.g. `prep-test-claude`) so production derivatives aren't overwritten, unless told otherwise.
+- Where `sub-drop0001`'s `ses-t1` files actually sit (all under `\\vs03.herseninstituut.knaw.nl\VS03-SandC-1\data\nin\data-drop`,
+  matching the default/pipeline paths in `bidsfun_gedai_benchmark.m` and `Pipelines/PrepPipelineDROP.m`):
+  - EEG (raw, BrainVision): `rawdata\sub-drop0001\ses-t1\eeg\sub-drop0001_ses-t1_task-sleep_run-01_eeg.vhdr` (+ `.eeg`/`.vmrk`)
+  - Scoring (`derivatives\scores\final`, the `scoringpath` the pipeline scripts pass):
+    `derivatives\scores\final\sub-drop0001_ses-t1_task-sleep_run-01_eeg.csv`
+  - Leadfield (Brainstorm head model, on the separate `VS03-SandD-4` share, the pipeline's `leadfieldpath`):
+    `\\vs03.herseninstituut.knaw.nl\VS03-SandD-4\PM\Data_Analysis\Brainstorm_db\DROP_Leadfields2\data\sub-drop0001\ses-t1\headmodel_surf_openmeeg.mat`
+  - SFP montage (resolved by `gedai.matchSfpFile`'s DROP branch, `sourcedata\gps`, not under `rawdata`):
+    `sourcedata\gps\sub-drop0001\solved\sub-drop0001_ses-t1_task-sleep_run-01_acq-domesolved_eeg.sfp`
 - Keep figures invisible in verification runs. They pop up over the user's work, even under `-batch`. Start every run
   with `set(0, 'DefaultFigureVisible', 'off')`; `exportgraphics` and `saveas` still work. Run long jobs in the background.
 - Syntax checks: `checkcode` for MATLAB, `.venv\Scripts\python.exe -m py_compile ICA\run-pamica.py` for Python.

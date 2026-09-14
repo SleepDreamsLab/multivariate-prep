@@ -262,8 +262,13 @@ for p = 1:numel(uNames)
         % When resuming, an existing channel file has already been ICP-fitted
         % against this anatomy; re-importing would discard that fit and re-run
         % the alignment against the warped scalp. Only import when the session
-        % is new or the whole subject is being rebuilt.
-        isImport = doAnatomy || isempty(sStudy.Channel) || isempty(sStudy.Channel.FileName);
+        % is new, the whole subject is being rebuilt, or this session has no
+        % head model yet: a channel file can exist here from a prior run that
+        % imported before the .sfp was corrected (or that failed before ever
+        % reaching process_headmodel), so its locations can't be trusted until
+        % a head model has actually been built from them — reimport straight
+        % from the current .sfp instead of reusing whatever is on disk.
+        isImport = doAnatomy || isempty(sStudy.Channel) || isempty(sStudy.Channel.FileName) || ~hasHM(s);
         if isImport
             % import_channel(iStudies, File, Format, ChannelReplace, ChannelAlign, isSave, isFixUnits, isApplyVox2ras)
             import_channel(iStudy, sfpPath{s}, char(opts.SfpFormat), 2, 0, 1, 1, 0);
