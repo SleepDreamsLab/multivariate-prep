@@ -60,8 +60,35 @@ function plotged(GED, opts)
 %                            apart in a spectrogram alone and obvious in the
 %                            trace. The figure grows to make room, so the
 %                            spectrograms are not shortened to fit.
+%                'signal_wavelet', 'signal_multitaper'
+%                            the same pair with the vertical ratio switched:
+%                            the trace takes four fifths of the block and the
+%                            spectrogram shrinks to a strip underneath it.
+%                            Reach for this the other way round from above -
+%                            when the trace is what needs reading closely and
+%                            the spectrogram is there only for context.
 %              The first three are the same modes as plotgednight.
 %   showact    Draw the activation traces at all. Default: true.
+%   events     Logical matrix [components x samples] marking events with true.
+%              Same number of columns as the activations, and indexed by
+%              component number down the rows - row 3 marks component #3
+%              whether or not it is the third one shown. Drawn over that
+%              component's activation trace or spectrogram in its own colour: a
+%              run of true samples as a shaded band, an isolated true sample as
+%              a thin line. For the '..._signal' and 'signal_...' pairings,
+%              drawn on the signal strip as well. Default: none.
+%   scoring    One sleep-stage digit per epoch, as scoreloader returns them:
+%              -3 N3, -2 N2, -1 N1, 0 Wake, 1 REM. Given it, a hypnogram is
+%              drawn full width above the first activation trace, spanning the
+%              whole recording. It does not scroll with xwindow; instead a
+%              vertical line sweeps across it to show where the visible window
+%              sits in the night. Default: none.
+%   epochlength  Scoring epoch length in seconds, for the hypnogram. Default: 30.
+%   keptepochs   Epoch indices that entered the GED. Shaded as a band in the
+%              hypnogram, so it is visible which part of the night the filters
+%              were built on. If GED.comp is itself the concatenation of those
+%              epochs (as after bidsfun_subcomp), the scoring is subset with
+%              them so the hypnogram still lines up with the traces. Default: none.
 %   xwindow    Seconds of data to show at once. [] (default) fits the whole
 %              recording into the axes; give it a duration - 30 for a screen of
 %              sleep scoring - and the traces show that much at a time, with a
@@ -146,6 +173,13 @@ function plotged(GED, opts)
 %         'cmap', slanCM('bwr'))                   % sharper in frequency
 %     plotged(GEDs(1).ged, 'acttype', 'wavelet_signal', 'xwindow', 30)
 %                                                  % spectrogram over its trace
+%     plotged(GEDs(1).ged, 'acttype', 'signal_wavelet', 'xwindow', 30)
+%                                                  % same pair, trace given the room
+%     ev = false(size(GEDs(1).ged.comp));
+%     ev(1, spindlepeaks) = true;                  % samples to mark on #1
+%     plotged(GEDs(1).ged, 'events', ev, 'xwindow', 30)
+%     plotged(GEDs(1).ged, 'scoring', scoring, 'keptepochs', GEDs(1).keptepochs, ...
+%         'xwindow', 30)                           % hypnogram on top, cursor tracks
 %
 %   See also PLOTGEDNIGHT, GED, TFMORLET, TFMULTI.
 
@@ -157,8 +191,13 @@ arguments
     opts.cmap                = 'turbo'
     opts.acttype   (1,:) char {mustBeMember(opts.acttype, ...
         {'signal', 'envelope', 'heat', 'wavelet', 'multitaper', ...
-         'wavelet_signal', 'multitaper_signal'})} = 'signal'
+         'wavelet_signal', 'multitaper_signal', ...
+         'signal_wavelet', 'signal_multitaper'})} = 'signal'
     opts.showact   (1,1) logical = true
+    opts.events          logical = logical([])
+    opts.scoring         double = []
+    opts.epochlength (1,1) double {mustBePositive} = 30
+    opts.keptepochs      double = []
     opts.xwindow         double = []
     opts.maxpoints (1,1) double {mustBePositive} = 20000
     opts.smoothsec (1,1) double {mustBePositive} = 5
@@ -195,11 +234,64 @@ if showact && any(comps > size(GED.comp, 1))
     showact = false;
 end
 
-%%% The '_signal' suffix is a display choice, not a different transform, so it is
-%%% split off here and everything downstream sees the plain method name.
-issig  = endsWith(opts.acttype, '_signal') && showact;
-method = erase(opts.acttype, '_signal');
+%%% The 'signal' pairing is a display choice, not a different transform, so it
+%%% is split off here and everything downstream sees the plain method name.
+%%% It can be named either way round - '<method>_signal' or 'signal_<method>' -
+%%% and swapsig records which, since that also decides which of the pair gets
+%%% the four-fifths share of the block below.
+swapsig = startsWith(opts.acttype, 'signal_') && showact;
+issig   = (swapsig || endsWith(opts.acttype, '_signal')) && showact;
+if swapsig
+    method = erase(opts.acttype, 'signal_');
+else
+    method = erase(opts.acttype, '_signal');
+end
 istf   = any(strcmp(method, {'wavelet', 'multitaper'})) && showact;
+
+%%% Event overlay (optional): a logical [components x samples] mask, indexed by
+%%% component number. Checked here so a size mistake is caught before anything
+%%% is drawn, and dropped when there are no activations to draw it on.
+events = opts.events;
+if ~isempty(events) && showact
+    if size(events, 2) ~= size(GED.comp, 2)
+        error('plotged:eventsSize', ...
+            ['events must have the same number of samples as the activations ' ...
+             '(%d); got %d.'], size(GED.comp, 2), size(events, 2));
+    end
+    if size(events, 1) < max(comps)
+        error('plotged:eventsRows', ...
+            ['events has %d row(s), but component #%d is being plotted; give it ' ...
+             'one row per component.'], size(events, 1), max(comps));
+    end
+elseif ~showact
+    events = logical([]);
+end
+
+%%% Hypnogram (optional): drawn only when there are traces for it to sit above.
+%%% The scoring and the activations have to describe the same stretch of
+%%% recording; when GED.comp is a concatenation of the kept epochs, keptepochs
+%%% repairs the mismatch by subsetting the scoring the same way - the same
+%%% reconciliation plotgednight does.
+scoring    = opts.scoring(:)';
+keptepochs = opts.keptepochs;
+hasHypno   = ~isempty(scoring) && showact;
+if hasHypno
+    nEpochsData = floor(size(GED.comp, 2) / (opts.epochlength * srate));
+    if abs(numel(scoring) - nEpochsData) > 2
+        if ~isempty(keptepochs) && numel(keptepochs) == nEpochsData
+            scoring    = scoring(keptepochs);
+            keptepochs = [];        % already applied; nothing left to shade
+            fprintf(['plotged: scoring subset to the %d kept epoch(s) to match the ' ...
+                     'stage-selected recording.\n'], numel(scoring));
+        else
+            warning('plotged:scoringMismatch', ...
+                ['the scoring covers %d epoch(s) but the data covers %d; the ' ...
+                 'hypnogram and the traces will not line up. Pass keptepochs, or ' ...
+                 'the scoring for exactly the data ged() was given.'], ...
+                numel(scoring), nEpochsData);
+        end
+    end
+end
 
 %%% Two columns per component: that makes the grid divisible both by the number
 %%% of maps in row 2 and by the two panels sharing row 1, whatever ncomps is.
@@ -212,7 +304,8 @@ gridcols = ncols + double(istf);                % columns the grid actually has
 halfrow  = ncols / 2;                           % the two panels sharing row 1
 topoWide = 2 * unit;                            % one component map
 topoSpan = 2;                                   % maps get double height
-nrows    = 1 + topoSpan + ncomps * double(showact);
+hypRows  = double(hasHypno);                    % the whole-night hypnogram
+nrows    = 1 + topoSpan + hypRows + ncomps * double(showact);
 
 %%% A signal strip takes a fifth of its component's block, so the figure grows by
 %%% a quarter of the block to make room for it - otherwise the strips would be
@@ -312,6 +405,31 @@ if showact
         xview = xlims(1) + [0 winlen];
     end
 
+    %%% The hypnogram sits directly above the first trace and shows the whole
+    %%% night at once. It is deliberately kept out of the scroll link below, so
+    %%% xwindow pages the traces while the hypnogram holds still; a cursor line,
+    %%% added once the traces exist, then tracks the visible window across it.
+    %%%
+    %%% Its own time base, not the traces': with a 30 s window the traces label
+    %%% in seconds, which over a whole night would read 0, 500, 1000, ... Pick
+    %%% the unit from the night's length instead. hyp2plot rescales a position
+    %%% on the trace axis to this one, and is 1 whenever no window is asked for.
+    axHyp = gobjects(0);
+    if hasHypno
+        tnight = t(end);
+        if tnight > 7200,    hypscale = 3600; hyplabel = 'Time (h)';
+        elseif tnight > 120, hypscale = 60;   hyplabel = 'Time (min)';
+        else,                hypscale = 1;    hyplabel = 'Time (s)';
+        end
+        hyp2plot = tscale / hypscale;
+
+        hrow  = 2 + topoSpan;
+        axHyp = nexttile(tl, (hrow - 1) * gridcols + 1, [1 ncols]);
+        drawhypnogram(axHyp, scoring, opts.epochlength / hypscale, keptepochs, 1);
+        xlim(axHyp, [0 max(tnight / hypscale, eps)]);
+        set(axHyp, 'XTickLabel', []);
+    end
+
     %%% One spectrogram column per pixel or so. maxpoints is a budget for min/max
     %%% pairs along a line and is far more than an image can show, so it only
     %%% acts as a ceiling here.
@@ -325,7 +443,7 @@ if showact
     axSig = gobjects(1, ncomps * double(issig));
 
     for i = 1:ncomps
-        row = 1 + topoSpan + i;
+        row = 1 + topoSpan + hypRows + i;
         if issig
             %%% A layout of its own for the pair. TileSpacing is a property of a
             %%% whole layout, so the gap between a spectrogram and its trace can
@@ -335,8 +453,16 @@ if showact
             blk = tiledlayout(tl, 5, 1, 'TileSpacing', 'none', 'Padding', 'none');
             blk.Layout.Tile     = (row - 1) * gridcols + 1;
             blk.Layout.TileSpan = [1 ncols];
-            ax   = nexttile(blk, 1, [4 1]);
-            asig = nexttile(blk, 5, [1 1]);
+            %%% 'signal_wavelet'/'signal_multitaper' switch this ratio round
+            %%% from 'wavelet_signal'/'multitaper_signal': the trace becomes
+            %%% the four-fifths panel and the spectrogram the strip beneath it.
+            if swapsig
+                asig = nexttile(blk, 1, [4 1]);
+                ax   = nexttile(blk, 5, [1 1]);
+            else
+                ax   = nexttile(blk, 1, [4 1]);
+                asig = nexttile(blk, 5, [1 1]);
+            end
         else
             ax   = nexttile(tl, (row - 1) * gridcols + 1, [1 ncols]);
             asig = gobjects(0);
@@ -368,8 +494,12 @@ if showact
                 opts.maxpoints, opts.smoothsec);
             %%% No y ticks: a fifth of a panel has no room to read a scale off,
             %%% and the strip is here to show the shape of the trace - artefacts,
-            %%% clipping, what the spectrogram was actually made from.
-            set(asig, 'YTick', []);
+            %%% clipping, what the spectrogram was actually made from. swapsig
+            %%% hands the trace four fifths instead, precisely so its scale can
+            %%% be read, so there the ticks stay.
+            if ~swapsig
+                set(asig, 'YTick', []);
+            end
             %%% Its own limits, and robust ones. drawactivation fits the axis
             %%% tightly to the whole recording, so one artefact sets the scale
             %%% and every ordinary stretch collapses to a flat line - which at a
@@ -385,13 +515,19 @@ if showact
             ylim(asig, [lo hi] + max(0.05 * (hi - lo), eps) * [-1 1]);
             xlim(asig, xview);
             axSig(i) = asig;
-            %%% The trace carries the time axis for the pair, so the spectrogram
-            %%% never labels one - its ticks would collide with the panel below.
-            set(ax, 'XTickLabel', []);
+            %%% Whichever of the pair sits at the bottom carries the time axis;
+            %%% the one on top never labels one - its ticks would collide with
+            %%% the panel below. swapsig puts the trace on top instead of the
+            %%% spectrogram, so it is the one cleared in that case.
+            if swapsig
+                set(asig, 'XTickLabel', []);
+            else
+                set(ax, 'XTickLabel', []);
+            end
         end
 
         bottom = axTime(i);
-        if issig, bottom = axSig(i); end
+        if issig && ~swapsig, bottom = axSig(i); end
         if i < ncomps
             set(bottom, 'XTickLabel', []);
         else
@@ -439,6 +575,31 @@ if showact
 
     addtimescroll(fig, tl, xaxes, opts.xwindow / tscale, xlims);
 
+    %%% The "you are here" cursor on the hypnogram. Only drawn when the traces
+    %%% show a window rather than the whole night; it hangs off the linked time
+    %%% axis, so the scrollbar, a zoom and a pan all carry it alike.
+    if hasHypno && ~isequal(xview, xlims)
+        cur = xline(axHyp, mean(xview) * hyp2plot, '-', 'Color', [0.10 0.45 0.95], ...
+            'LineWidth', 2);
+        cur.HandleVisibility = 'off';
+        addlistener(axTime(1), 'XLim', 'PostSet', ...
+            @(~, ~) movecursor(cur, axTime(1), hyp2plot));
+
+        %%% Click anywhere on the hypnogram to jump the window there, centred on
+        %%% the point clicked. The stairs and bands are made click-through so the
+        %%% event always reaches the axes; the linked time axis and its listeners
+        %%% (this cursor, the scrollbar) then follow from the one xlim change.
+        seeklen = diff(xview);
+        axHyp.ButtonDownFcn = @(src, ~) seekhypno(src, axTime(1), hyp2plot, seeklen, xlims);
+        set(allchild(axHyp), 'HitTest', 'off');
+        %%% The hypnogram runs on its own time base now, so it keeps its tick
+        %%% labels - they are how the cursor's position is read off. Without a
+        %%% window the two axes match and the labels would only be a duplicate
+        %%% row, so there they stay hidden.
+        set(axHyp, 'XTickLabelMode', 'auto');
+        xlabel(axHyp, hyplabel);
+    end
+
     %%% One colour scale for every component, and one bar to read it by. Each
     %%% panel proposed limits from its own recording; the median of those keeps a
     %%% single odd component from stretching the scale flat for the rest.
@@ -460,7 +621,7 @@ if showact
     %%% tile index means nothing there and the bar silently disappears.
     if istf
         clim   = [median(tfclim(:, 1)) median(tfclim(:, 2))];
-        cbTile = (1 + topoSpan) * gridcols + gridcols;
+        cbTile = (1 + topoSpan + hypRows) * gridcols + gridcols;
         set(axTime, 'CLim', clim);
 
         axCB = nexttile(tl, cbTile, [ncomps 1]);
@@ -477,6 +638,21 @@ if showact
             case 'raw',     ylabel(cb, 'Power (dB)');
         end
     end
+
+    %%% Event overlay, last of all - once every axis has its final y-limits, so
+    %%% the bands can be built to span exactly those and nothing they draw can
+    %%% drag the amplitude scale the way a placeholder range added mid-loop
+    %%% would. Drawn on the trace/spectrogram, and on the signal strip too when
+    %%% there is one - a pairing has the marks read against both views.
+    if ~isempty(events)
+        s2p = 1 / (srate * tscale);
+        for i = 1:ncomps
+            drawevents(axTime(i), events(comps(i), :), s2p, palette(i, :));
+            if issig
+                drawevents(axSig(i), events(comps(i), :), s2p, palette(i, :));
+            end
+        end
+    end
 end
 
 %%% Set after every topoplot call, not inside the loop: EEGLAB's topoplot applies
@@ -486,5 +662,93 @@ for ax = [topoAxes cmapAxes]
     colormap(ax, cmap);
 end
 set(fig, 'Color', 'w');
+end
+
+
+function drawevents(ax, mask, s2p, col)
+%%% One line for the point events and one patch for the spans - never an object
+%%% per marked sample. A night of detections is thousands of xlines, each with
+%%% its own limit listeners, and every scroll then redraws the lot and the
+%%% figure crawls. Here contiguous true runs collapse to a single patch face
+%%% each and isolated true samples share one NaN-separated line, so a component
+%%% costs two graphics objects however many events it has.
+%%%
+%%% s2p converts a sample index to the axis' plot-time units: t = (k-1)*s2p.
+%%% Lines and span edges are a darkened opaque form of the component colour so
+%%% they read over a saturated spectrogram as well as over a pale trace; the
+%%% span interior is the plain colour at low alpha. The markers are built to
+%%% span the axis' current y-limits and re-spanned by one listener if those are
+%%% later zoomed; they never write YLim themselves, so they cannot pull the
+%%% amplitude scale.
+mask = logical(mask(:)');
+if ~any(mask), return; end
+
+edges  = diff([false, mask, false]);
+starts = find(edges == 1);
+stops  = find(edges == -1) - 1;
+ispt   = starts == stops;
+
+yl      = ax.YLim;
+cdark   = 0.55 * col;
+handles = gobjects(0);
+
+if any(ispt)
+    x = (starts(ispt) - 1) * s2p;
+    n = numel(x);
+    handles(end + 1) = line(ax, reshape([x; x; nan(1, n)], [], 1), ...
+        repmat([yl(1); yl(2); NaN], n, 1), ...
+        'Color', cdark, 'LineWidth', 0.75, 'HandleVisibility', 'off');
+end
+if any(~ispt)
+    xa = (starts(~ispt) - 1) * s2p;
+    xb = (stops(~ispt)  - 1) * s2p;
+    m  = numel(xa);
+    handles(end + 1) = patch(ax, 'XData', [xa; xb; xb; xa], ...
+        'YData', repmat([yl(1); yl(1); yl(2); yl(2)], 1, m), ...
+        'FaceColor', col, 'FaceAlpha', 0.30, 'EdgeColor', cdark, ...
+        'LineWidth', 0.75, 'HandleVisibility', 'off');
+end
+
+addlistener(ax, 'YLim', 'PostSet', @(~, ~) respanevents(ax, handles));
+end
+
+% -------------------------------------------------------------------------
+function respanevents(ax, handles)
+% Stretch the event markers to the axis' current y-limits, without touching
+% YLim itself - so a zoom on one linked trace re-spans every component's marks.
+yl = ax.YLim;
+for k = 1:numel(handles)
+    h = handles(k);
+    if ~isgraphics(h), continue, end
+    y = h.YData;
+    if strcmp(h.Type, 'line')
+        y(1:3:end) = yl(1);
+        y(2:3:end) = yl(2);
+    else
+        y([1 2], :) = yl(1);
+        y([3 4], :) = yl(2);
+    end
+    h.YData = y;
+end
+end
+
+% -------------------------------------------------------------------------
+function movecursor(cur, ax, k)
+% Keep the hypnogram's "you are here" line on the centre of the visible window,
+% rescaled from the trace axis' time unit to the hypnogram's own.
+if isgraphics(cur) && isgraphics(ax)
+    cur.Value = mean(ax.XLim) * k;
+end
+end
+
+% -------------------------------------------------------------------------
+function seekhypno(axHyp, axTrace, k, winlen, xfull)
+% Jump the scroll window to the point clicked on the hypnogram, centred there
+% and clamped to the recording. k rescales the hypnogram's time unit back to
+% the trace axis'; the linked axes and their listeners follow from the xlim.
+if ~isgraphics(axHyp) || ~isgraphics(axTrace), return, end
+cx = axHyp.CurrentPoint(1, 1) / k;
+lo = max(xfull(1), min(cx - winlen / 2, xfull(2) - winlen));
+xlim(axTrace, [lo lo + winlen]);
 end
 

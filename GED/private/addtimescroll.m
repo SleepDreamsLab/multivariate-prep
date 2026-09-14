@@ -41,6 +41,20 @@ sld.Callback = @(src, ~) setwindow(axTime, src.Value, winlen);
 %%% ContinuousValueChange makes it scroll while the thumb is dragged, instead of
 %%% only jumping when it is released.
 addlistener(sld, 'ContinuousValueChange', @(src, ~) setwindow(axTime, src.Value, winlen));
+
+%%% Keep the thumb under whatever else moves the window - a click on the
+%%% hypnogram, a zoom, a programmatic xlim change - so it never misreports where
+%%% the view sits. Setting Value fires no callback, so this cannot loop.
+axs = axTime(isgraphics(axTime));
+if ~isempty(axs)
+    addlistener(axs(1), 'XLim', 'PostSet', @(~, ~) syncslider(sld, axs(1)));
+end
+end
+
+% -------------------------------------------------------------------------
+function syncslider(sld, ax)
+if ~isgraphics(sld) || ~isgraphics(ax), return, end
+sld.Value = min(max(ax.XLim(1), sld.Min), sld.Max);
 end
 
 % -------------------------------------------------------------------------

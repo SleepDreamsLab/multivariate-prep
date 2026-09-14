@@ -47,7 +47,25 @@ function GED = ged(data, opts)
 %                  variance in S, so the eigenvalues land well below 1 here -
 %                  read them relative to each other, or set covnorm 'trace'.
 %     'data'       S and R computed from two arrays passed in directly.
-%                  Options: sdata, rdata. For anything not covered above.
+%                  Options: sdata, rdata, each either a channels x time array
+%                  (cut into segdur segments, as continuous data always is) or
+%                  a cell array of channels x time_i matrices, one per event,
+%                  of whatever length each event happens to be. The cell form
+%                  gives every event exactly one covariance regardless of its
+%                  duration, then averages them with equal weight - the right
+%                  choice for a set of discrete, variably-timed events (bursts,
+%                  sawtooth waves, artifacts, ...), where chopping a long event
+%                  into several segdur segments would pseudo-replicate it
+%                  across the outlier rejection, permutation test and
+%                  cross-validation, and would let it outweigh short events in
+%                  the average. segdur is ignored for cell input.
+%                  ssamples/rsamples do the slicing for you: give sample
+%                  indices into the input data instead of sdata/rdata itself -
+%                  either an events x 2 matrix of [start stop] pairs
+%                  (inclusive, contiguous), or a cell array of the actual
+%                  sample indices per event (need not be contiguous). Give
+%                  sdata or ssamples (not both), same for rdata/rsamples.
+%                  Indexes into continuous (2-D) data only.
 %     'cov'        S and R passed in ready-made. Options: S, R. Covariance
 %                  cleaning, permutation testing and cross-validation are then
 %                  unavailable, since those all need the individual segments.
@@ -56,7 +74,9 @@ function GED = ged(data, opts)
 %   -----------------------------
 %   segdur        Segment length in seconds for continuous (2-D) data. Covariances
 %                 are computed per segment and averaged, each segment mean-centred
-%                 on its own. Default: 2. Epoched data use one segment per trial.
+%                 on its own. Default: 2. Epoched data use one segment per trial;
+%                 cell-array sdata/rdata (contrast 'data') likewise use one segment
+%                 per cell, whatever its length - segdur does not apply to them.
 %                 For narrowband contrasts keep this well above one cycle of
 %                 peakfreq - the check below warns if it is not.
 %   covoutlierz   Drop segment covariances whose Euclidean distance to the average
@@ -136,6 +156,10 @@ function GED = ged(data, opts)
 %   GED.S, GED.R     The two covariance matrices, after normalisation.
 %   GED.Rreg         R after shrinkage - the matrix actually handed to eig.
 %   GED.covS, covR   The per-segment covariances that survived the outlier check.
+%                    Returned only when nperm > 0 or cvfolds > 1 (the routines
+%                    that need them); otherwise [] - on a whole-night recording
+%                    the stack is several GB and everything it carries is already
+%                    summarised in S and R.
 %   GED.perm         .maxnull, .p (per component), .crit95, .nperm
 %   GED.cv           .lambda (components x folds), .mapcorr, .nfolds
 %   GED.diagnostics  ranks, condition numbers, trace ratio, dropped segments,
@@ -167,6 +191,18 @@ function GED = ged(data, opts)
 %     G    = ged(EEGa, 'contrast', 'spectral', 'peakfreq', 11);
 %     comp = G.apply(EEGb.data);
 %
+%     % Variable-length events (e.g. sawtooth waves) vs. matched control windows,
+%     % one covariance per event rather than per segdur chunk. sawtoothSamples and
+%     % controlSamples are events x 2 matrices of [start stop] sample pairs into
+%     % EEG.data - ged() does the slicing itself via ssamples/rsamples.
+%     G = ged(EEG, 'contrast', 'data', 'ssamples', sawtoothSamples, 'rsamples', controlSamples, ...
+%             'covnorm', 'trace', 'nperm', 1000);
+%
+%     % Same, but each event's samples are not a contiguous range (e.g. only the
+%     % rising-edge samples of every sawtooth wave) - a cell array instead
+%     G = ged(EEG, 'contrast', 'data', 'ssamples', sawtoothRisingIdx, 'rsamples', controlIdx, ...
+%             'covnorm', 'trace', 'nperm', 1000);
+%
 % Reference:
 %   Cohen MX (2022). A tutorial on generalized eigendecomposition for denoising,
 %   contrast enhancement, and dimension reduction in multichannel
@@ -192,6 +228,8 @@ arguments
     opts.rtrials             double = []
     opts.sdata                      = []
     opts.rdata                      = []
+    opts.ssamples                   = []
+    opts.rsamples                   = []
     opts.S                   double = []
     opts.R                   double = []
 
@@ -223,8 +261,8 @@ tAll   = tic;
 timing = struct('covariance', 0, 'solve', 0, 'components', 0, ...
                 'permutation', 0, 'crossvalidation', 0, 'total', 0);
 
-[X, srate, times, chanlocs, labels] = unpack(data, opts);
-X = normalisechannels(X, opts.channorm);
+[Xraw, srate, times, chanlocs, labels] = unpack(data, opts);
+X = normalisechannels(Xraw, opts.channorm);
 [nchan, npnts, ntrials] = size(X, 1, 2, 3);
 
 if opts.verbose
@@ -293,11 +331,14 @@ switch opts.contrast
         covR = covstack(Xwin, segsamples);               % average of the single-trial covariances
 
     case 'data'
-        if isempty(opts.sdata) || isempty(opts.rdata)
-            error('ged:needData', 'Give both sdata and rdata for the data contrast.');
+        sdata = resolvesamples(opts.sdata, opts.ssamples, Xraw, 'ssamples', 'sdata');
+        rdata = resolvesamples(opts.rdata, opts.rsamples, Xraw, 'rsamples', 'rdata');
+        if isempty(sdata) || isempty(rdata)
+            error('ged:needData', ...
+                'Give both sdata/ssamples and rdata/rsamples for the data contrast.');
         end
-        covS = covstack(normalisechannels(double(opts.sdata), opts.channorm), segsamples);
-        covR = covstack(normalisechannels(double(opts.rdata), opts.channorm), segsamples);
+        covS = covstack(normalisechannels(tonumeric(sdata), opts.channorm), segsamples);
+        covR = covstack(normalisechannels(tonumeric(rdata), opts.channorm), segsamples);
 
     case 'cov'
         if isempty(opts.S) || isempty(opts.R)
@@ -312,6 +353,11 @@ if size(covS, 1) ~= size(covR, 1)
         ['S spans %d channels and R spans %d - the two covariance matrices must cover the ' ...
          'same channels, in the same order.'], size(covS, 1), size(covR, 1));
 end
+if size(covS, 1) ~= nchan
+    error('ged:dataChannelMismatch', ...
+        ['sdata/rdata span %d channels but the input data has %d - they must be the same ' ...
+         'channels, in the same order.'], size(covS, 1), nchan);
+end
 
 %%% Multivariate outlier segments (3.3). One stretch of muscle activity or a lost
 %%% electrode connection can dominate an averaged covariance matrix.
@@ -322,8 +368,16 @@ if opts.verbose && (droppedS + droppedR) > 0
         droppedS, droppedS + size(covS, 3), droppedR, droppedR + size(covR, 3), opts.covoutlierz);
 end
 
-S = normalisecov(mean(covS, 3), opts.covnorm);
-R = normalisecov(mean(covR, 3), opts.covnorm);
+%%% The segment means feed S, R, the PCA basis and the component maps; reduce the
+%%% stack once and reuse it rather than averaging thousands of covariances again.
+covSbar = mean(covS, 3);
+covRbar = mean(covR, 3);
+S = normalisecov(covSbar, opts.covnorm);
+R = normalisecov(covRbar, opts.covnorm);
+
+%%% The uncompressed S, kept before pcacompress overwrites S below - this is what
+%%% the component maps (w'S) are read off, always in the original channel space.
+Sfull = S;
 
 timing.covariance = toc(tStage);
 if opts.verbose
@@ -350,7 +404,7 @@ diagnostics = struct( ...
 %%% think about the compressed space.
 V = eye(nchan);
 if opts.pcacompress
-    V = pcabasis((mean(covS, 3) + mean(covR, 3)) / 2, opts.pcadims);
+    V = pcabasis((covSbar + covRbar) / 2, opts.pcadims);
     S = V' * S * V;
     R = V' * R * V;
     diagnostics.npcadims = size(V, 2);
@@ -403,7 +457,6 @@ end
 %%% Component maps (3.6). The eigenvectors themselves are not physiologically
 %%% interpretable - they also suppress irrelevant channels - so what gets plotted
 %%% is w'S: the source projecting outwards onto the electrodes.
-Sfull = normalisecov(mean(covS, 3), opts.covnorm);
 maps  = Sfull * W;
 
 %%% The eigenvector sign is arbitrary (3.5); fix it on the strongest channel of the
@@ -487,8 +540,16 @@ GED.comp        = comp;
 GED.S           = S;
 GED.R           = R;
 GED.Rreg        = Rreg;
-GED.covS        = covS;
-GED.covR        = covR;
+%%% The segment stacks are only useful to a caller who can still re-fit (perm or
+%%% cross-validation); otherwise they are a multi-GB copy of information already
+%%% in S and R, and on a batch run they pile up across recordings.
+if opts.nperm > 0 || opts.cvfolds > 1
+    GED.covS    = covS;
+    GED.covR    = covR;
+else
+    GED.covS    = [];
+    GED.covR    = [];
+end
 GED.perm        = perm;
 GED.cv          = cv;
 GED.diagnostics = diagnostics;
@@ -562,6 +623,27 @@ end
 function X = normalisechannels(X, mode)
 % Channel scaling (3.3). 'pooled' keeps the relative channel variances, which the
 % component maps depend on; 'zscore' does not, and is for multimodal data only.
+%
+% X may be a cell array of channels x time_i matrices (one per event, see
+% covstack) instead of a single array; 'pooled' and 'zscore' then pool their
+% statistics across every cell, so that events are normalised against one
+% another rather than each independently against itself.
+
+if iscell(X)
+    switch mode
+        case 'none'
+            % covariance matrices keep the units of the data, which is usually right
+        case 'pooled'
+            sd = std([X{:}], 0, 'all');
+            X  = cellfun(@(c) (c - mean(c, 2)) / sd, X, 'UniformOutput', false);
+        case 'zscore'
+            cat = [X{:}];
+            mu  = mean(cat, 2);
+            sd  = std(cat, 0, 2);
+            X   = cellfun(@(c) (c - mu) ./ sd, X, 'UniformOutput', false);
+    end
+    return
+end
 
 switch mode
     case 'none'
@@ -575,35 +657,135 @@ end
 end
 
 % -------------------------------------------------------------------------
+function out = resolvesamples(data, samples, Xraw, samplesname, dataname)
+% Resolve sdata/rdata against their ssamples/rsamples counterpart: either the
+% caller already sliced the events out (data non-empty), or gave sample
+% indices into the input recording (samples non-empty) for this function to
+% slice out itself. Giving both is ambiguous and rejected.
+
+if isempty(samples)
+    out = data;
+    return
+end
+if ~isempty(data)
+    error('ged:dataAndSamples', 'Give either %s or %s, not both.', dataname, samplesname);
+end
+out = samplestocells(Xraw, samples, samplesname);
+end
+
+% -------------------------------------------------------------------------
+function C = samplestocells(Xraw, samples, name)
+% Slice one event per cell out of the input recording (2-D, channels x time),
+% given either an events x 2 matrix of [start stop] sample pairs (inclusive,
+% contiguous) or a cell array, one vector of actual sample indices per event
+% (need not be contiguous or sorted). Either form gives ged() the same
+% per-event covariance treatment as passing the sliced data directly via
+% sdata/rdata (see covstack) - this just saves the caller the indexing.
+
+if ndims(Xraw) > 2 %#ok<ISMAT>
+    error('ged:samplesNeedContinuous', '%s indexes into continuous (2-D) data only.', name);
+end
+npnts = size(Xraw, 2);
+
+if iscell(samples)
+    C = cell(size(samples));
+    for i = 1:numel(samples)
+        idx = round(double(samples{i}(:)))';
+        if isempty(idx) || any(idx < 1) || any(idx > npnts)
+            error('ged:samplesOutOfRange', ...
+                '%s{%d} contains sample indices outside 1:%d.', name, i, npnts);
+        end
+        C{i} = Xraw(:, idx);
+    end
+elseif isnumeric(samples)
+    if size(samples, 2) ~= 2
+        error('ged:samplesShape', ...
+            '%s must be an events x 2 matrix of [start stop] sample pairs, or a cell array.', name);
+    end
+    n = size(samples, 1);
+    C = cell(1, n);
+    for i = 1:n
+        a = round(samples(i, 1));
+        b = round(samples(i, 2));
+        if a < 1 || b > npnts || b < a
+            error('ged:samplesOutOfRange', ...
+                '%s row %d = [%g %g] is outside 1:%d or has stop < start.', name, i, a, b, npnts);
+        end
+        C{i} = Xraw(:, a:b);
+    end
+else
+    error('ged:samplesType', '%s must be a numeric events x 2 matrix or a cell array.', name);
+end
+end
+
+% -------------------------------------------------------------------------
+function X = tonumeric(X)
+% Accept a numeric array or a cell array of numeric arrays (one array per
+% event, for the cell-array form of sdata/rdata - see covstack) and return
+% double precision either way.
+
+if iscell(X)
+    X = cellfun(@double, X, 'UniformOutput', false);
+else
+    X = double(X);
+end
+end
+
+% -------------------------------------------------------------------------
 function C = covstack(X, segsamples)
 % One covariance matrix per segment, each mean-centred on its own (3.3). Epoched
 % data give one covariance per trial; continuous data are cut into segments of
 % segsamples points, with a trailing remainder shorter than one segment ignored.
+% A cell array of channels x time_i matrices gives one covariance per cell,
+% whatever its length - the equal-length restriction of the trial case above,
+% lifted for a set of events that were never going to share one duration.
+%
+% Every segment covariance is formed in a single batched multiply (pagemtimes):
+% reshape the data into a channels x samples x segment stack, subtract each
+% segment's own mean, and multiply the stack by its own transpose. On a
+% whole-night recording this is far faster than one matrix multiply per segment.
+
+if iscell(X)
+    n     = numel(X);
+    nchan = size(X{1}, 1);
+    C     = zeros(nchan, nchan, n);
+    for i = 1:n
+        Y = X{i};
+        if size(Y, 1) ~= nchan
+            error('ged:cellChannelMismatch', ...
+                'Cell %d has %d channels, cell 1 has %d - every event must cover the same channels.', ...
+                i, size(Y, 1), nchan);
+        end
+        if size(Y, 2) < 2
+            error('ged:cellTooShort', 'Cell %d has fewer than 2 time points - cannot form a covariance.', i);
+        end
+        if any(~isfinite(Y(:)))
+            error('ged:nonFinite', 'Cell %d contains NaN or Inf, which would make its covariance meaningless.', i);
+        end
+        Y = Y - mean(Y, 2);
+        C(:, :, i) = (Y * Y') / (size(Y, 2) - 1);
+    end
+    C = (C + permute(C, [2 1 3])) / 2;
+    return
+end
 
 [nchan, npnts, ntrials] = size(X, 1, 2, 3);
 
 if ntrials > 1
-    C = zeros(nchan, nchan, ntrials);
-    for t = 1:ntrials
-        C(:, :, t) = onecov(X(:, :, t));
+    Y   = X - mean(X, 2);           % mean offsets would steer the solution (2.1)
+    nrm = npnts - 1;
+else
+    if segsamples >= npnts
+        segsamples = npnts;
     end
-    return
+    nseg = max(1, floor(npnts / segsamples));
+    Y    = reshape(X(:, 1:nseg * segsamples), nchan, segsamples, nseg);
+    Y    = Y - mean(Y, 2);
+    nrm  = segsamples - 1;
 end
 
-if segsamples >= npnts
-    segsamples = npnts;
-end
-nseg = max(1, floor(npnts / segsamples));
-C    = zeros(nchan, nchan, nseg);
-for s = 1:nseg
-    C(:, :, s) = onecov(X(:, (s - 1) * segsamples + (1:segsamples)));
-end
-end
-
-function C = onecov(Y)
-Y = Y - mean(Y, 2);                  % mean offsets would steer the solution (2.1)
-C = (Y * Y') / (size(Y, 2) - 1);
-C = (C + C') / 2;                    % symmetric to machine precision
+C = pagemtimes(Y, 'none', Y, 'transpose') / nrm;
+C = (C + permute(C, [2 1 3])) / 2;  % symmetric to machine precision
 end
 
 % -------------------------------------------------------------------------
@@ -679,6 +861,13 @@ function Y = gaussfilter(X, srate, peakfreq, fwhm)
 % half maximum in Hz: no toolbox, no phase distortion, no filter order to pick.
 % Applied to the whole time series rather than to the covariance window alone, so
 % that edge artefacts stay out of the covariance matrices (3.3).
+%
+% The complex spectra are the largest arrays ged() builds, and on a whole-night
+% recording the naive one-shot transform does not fit in memory. Three things
+% keep it in RAM and fast: the FFT runs in single precision, over a power-of-two
+% length (a multi-million-point FFT with large prime factors is far slower than
+% the zero-padded one), and one block of channels at a time. The filtered data
+% are returned in the input class, so nothing downstream sees single.
 
 if peakfreq <= 0
     error('ged:badFrequency', 'peakfreq must be positive (asked for %g Hz).', peakfreq);
@@ -687,12 +876,21 @@ if peakfreq > srate / 2
     error('ged:aboveNyquist', 'peakfreq (%g Hz) is above the Nyquist frequency (%g Hz).', ...
         peakfreq, srate / 2);
 end
+
 npnts = size(X, 2);
-hz    = linspace(0, srate, npnts);
+nfft  = 2^nextpow2(npnts);
+hz    = linspace(0, srate, nfft);
 s     = fwhm * (2 * pi - 1) / (4 * pi);        % Gaussian width from the FWHM
 gauss = exp(-0.5 * ((hz - peakfreq) / s).^2);
-gauss = gauss / max(gauss);                    % gain-normalised: no amplitude bias
-Y     = 2 * real(ifft(fft(X, [], 2) .* gauss, [], 2));
+gauss = single(gauss / max(gauss));            % gain-normalised: no amplitude bias
+
+Y     = zeros(size(X), 'like', X);
+block = max(1, floor(5e8 / (8 * nfft)));       % ~500 MB per intermediate spectrum
+for c = 1:block:size(X, 1)
+    idx       = c:min(c + block - 1, size(X, 1));
+    filtered  = 2 * real(ifft(fft(single(X(idx, :)), nfft, 2) .* gauss, [], 2));
+    Y(idx, :) = filtered(:, 1:npnts);
+end
 end
 
 % -------------------------------------------------------------------------

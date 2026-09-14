@@ -159,3 +159,17 @@ report(report.geometryMismatch, {'subject','session'})
 
 unique(report.subject(report.geometryMismatch))
 {'sub-drop0004', 'sub-drop0007', 'sub-drop0055', 'sub-drop0056'}
+
+for ifail=1:numel(fails.gedai)
+    fprintf('%s\n', fails.gedai{ifail}.fileID);    
+    fprintf('%s\n', fails.gedai{ifail}.message);
+end No newline at end of file
+
+
+%%% Benchmark
+fail.benchmark = bidsfun_gedai_benchmark(BIDS, defaults{:}, ...
+    'runmode', 'StageSpecific', ...
+    'inputdesc', geddesc, ...
+    'leadfielddir', leadfieldpath, ...
+    'scoringpath', scoringpath ...      
+    );

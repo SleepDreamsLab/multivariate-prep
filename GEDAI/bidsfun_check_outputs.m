@@ -234,6 +234,12 @@ for ifile = 1:numel(filesEEG)
     if opts.checkinputs
         r.inputs = struct('scoring', expect('scoring'), 'sfp', expect('sfp'), ...
             'leadfield', expect('leadfield'));
+        %%% A missing output on this recording is unremarkable once you already know
+        %%% scoring/sfp/leadfield could not be resolved for it - that is flagged
+        %%% separately in the heatmap rather than colored the same as a genuine gap.
+        r.inputBlocked = ~found('scoring') || ~found('sfp') || ~found('leadfield');
+    else
+        r.inputBlocked = false;
     end
     rows{end+1,1} = r; %#ok<AGROW>
 end
@@ -320,7 +326,7 @@ if opts.plot
     end
     fig = plotStatusHeatmap(statusMat(:, showIdx), colLabels(showIdx), ...
         cellfun(@(r) r.fileID, rows, 'uni', 0), opts.plotfile, ...
-        nnz(isInput(showIdx)));
+        nnz(isInput(showIdx)), cellfun(@(r) r.inputBlocked, rows));
 end
 
 report = struct('table', T, 'rows', {rows}, 'todo', {todoList}, 'missing', {missList}, ...
@@ -373,14 +379,25 @@ pathOrWhere = f;
 end
 
 % -------------------------------------------------------------------------
-function fig = plotStatusHeatmap(S, colLabels, fileIDs, savefile, nInputCols)
+function fig = plotStatusHeatmap(S, colLabels, fileIDs, savefile, nInputCols, explainedRows)
 % imagesc grid: rows = recordings, columns = one file per pipeline stage, with the
 % external inputs ruled off from the outputs the pipeline itself writes.
-%   0 missing (red) | 1 present (green) | NaN not checked (grey)
+%   0 missing (red) | 1 present (green) | NaN or explained-missing (grey)
+%
+%   explainedRows: nRow x 1 logical, true where the recording is missing scoring, sfp
+%   or leadfield. For that row, a missing OUTPUT (right of the input/output divider) is
+%   folded into the grey "(explained)" bin instead of red - the gap is already accounted
+%   for by the missing input, so it should not read as an unexplained failure.
 nRow = size(S, 1);
 M = S;
-M(M == 2)   = 1;                 % "stale" (refresh) shown the same as present
-M(isnan(M)) = -1;                % fold "not checked" into its own colour bin
+M(M == 2) = 1;                   % "stale" (refresh) shown the same as present
+if nargin >= 6 && nInputCols > 0 && nInputCols < size(M, 2)
+    outCols = nInputCols+1:size(M, 2);
+    Mout = M(:, outCols);
+    Mout(explainedRows(:) & Mout == 0) = -1;
+    M(:, outCols) = Mout;
+end
+M(isnan(M)) = -1;                % fold "not checked" / explained-missing into one colour bin
 
 %%% Rows are grouped by subject, so a participant label heads a BLOCK of recordings, not a
 %%% single row - both the tick placement and the figure height follow from that.
@@ -392,7 +409,7 @@ fig = figure('Color', 'w', 'Name', 'prep status', ...
                  min(1200, 260 + max(14*nRow, 16*numel(firstIdx)))]);
 ax = axes(fig);
 imagesc(ax, M);
-cmap = [0.75 0.75 0.75;   % -1 not checked
+cmap = [0.75 0.75 0.75;   % -1 not checked / missing-but-explained
         0.85 0.20 0.20;   %  0 missing
         0.20 0.65 0.30];  %  1 present
 colormap(ax, cmap);
@@ -442,7 +459,7 @@ title(ax, sprintf('Prep pipeline status  -  %d recordings, %d missing input(s), 
     nRow, nMissIn, nMissOut), 'Interpreter', 'none');
 
 %%% Legend via dummy patches
-labels = {'missing', 'present', 'not checked'};
+labels = {'missing', 'present', '(explained)'};
 cidx   = [2 3 1];
 h = gobjects(1, numel(labels));
 for k = 1:numel(labels)
