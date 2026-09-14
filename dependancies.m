@@ -55,5 +55,6 @@ addpath(fullfile(here, 'ICA'))
 addpath(fullfile(here, 'GED'))       % -> ged (generalized eigendecomposition)
 addpath(fullfile(here, 'Leadfield')) % -> ExecuteLeadfieldBuilder, bidsfun_build_leadfield
 addpath(fullfile(here, 'SleepOsci')) % -> run_sleeposci_bids
+addpath(fullfile(here, 'Benchmark')) % -> bidsfun_gedai_benchmark, +bench
 addpath(fullfile(here, 'colormaps')) % -> slanCM, 200 colormaps (FEX #120088)
 clear here sibling
