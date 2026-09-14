@@ -143,4 +143,5 @@ set(ax_clean, 'FontSize', 10, 'Box', 'off', 'TickDir', 'out', 'YDir', 'normal');
 linkaxes([ax_hyp, ax_exp, ax_raw, ax_clean], 'x');
 
 save_fig(fig, opts.SavePath, 'timefreq');
+close(fig);
 end

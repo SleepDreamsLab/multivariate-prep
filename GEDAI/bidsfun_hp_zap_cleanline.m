@@ -327,6 +327,13 @@ for ifile = 1:numel(filesEEG)
             'adaptiveSigma',   opts.adaptiveSigma, ...
             'detectionWinsize', opts.zapDetectionWinsize, ...
             'plotResults',     opts.plotResults);
+        %%% Back to [nChannels x nSamples], and back to single. cleanline_fast (next
+        %%% step) casts each channel block to double itself as it needs it, so holding
+        %%% the whole recording as double here just doubles the resident footprint
+        %%% (~13 GB vs ~7 GB at 230 ch x 8 h x 250 Hz) for the length of the CleanLine
+        %%% stage - memory the parpool below then has to work around. Cast before the
+        %%% transpose so the transient buffer is single, not double.
+        EEG.data = single(EEG.data);
         EEG.data = EEG.data.';
         EEG.etc.zapline.config    = zaplineConfig;
         EEG.etc.zapline.analytics = analyticsResults;

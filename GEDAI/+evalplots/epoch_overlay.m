@@ -114,5 +114,6 @@ for iEp = epochsToPlot
     ylim([opts.ChanOffset * -1, nPlotChans * opts.ChanOffset]);
 
     save_fig(fig, opts.SavePath, sprintf('epoch_%03d_%s', iEp, stageLbl));
+    close(fig);
 end
 end

@@ -52,6 +52,7 @@ for iRange = 1:nRanges
 end
 
 save_fig(fig, opts.SavePath, 'exponent_by_stage');
+close(fig);
 end
 
 % -------------------------------------------------------------------------

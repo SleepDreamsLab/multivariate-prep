@@ -29,7 +29,7 @@ import gc
 import json
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import mne
@@ -50,9 +50,9 @@ SUBJECTS      = None # ["drop0001"]  # None = all subjects
 SESSIONS      = None  # None # ["t1"]  # None = all sessions
 TASKS         = ["Sleep", "sleep"]  # None = all tasks
 
-REFRESH_PAMICA = True  # True = refit and overwrite even if <mat_stem>.mat already exists
+REFRESH_PAMICA = False  # True = refit and overwrite even if <mat_stem>.mat already exists
                         # (both skip-checks in run_amica() respect this)
-REFRESH_ICLABEL = True  # True = relabel and overwrite even if <stem>_iclabels.tsv already exists
+REFRESH_ICLABEL = False  # True = relabel and overwrite even if <stem>_iclabels.tsv already exists
 
 # One recording failing must not take the batch down with it -- a diverging AMICA fit
 # roughly 20 subjects into an overnight run used to abort every recording after it.
@@ -68,8 +68,44 @@ DATA_EXTENSIONS = (".set", ".vhdr")  # preference order when both exist for a re
 # checking the next one. Once a full pass leaves recordings still missing, it waits
 # WAIT_LOOP_MINUTES before rescanning just those. If no scan pass turns up a new
 # file for WAIT_MAX_MINUTES straight, it gives up and raises for whatever's left.
+#
+# WAIT_MAX_MINUTES is time spent *waiting*, not wall time: the clock is reset after
+# a pass finishes processing, not before it starts. Measuring it from the start of
+# the pass meant a run that found 20 nights and fitted them overnight had already
+# blown the budget by the time it looked at the stragglers, so it gave up on them
+# without ever sleeping once -- the waiting only ever ran on a pass that found
+# nothing at all.
 WAIT_MAX_MINUTES = 180  # give up if no new file appears across scans for this long
 WAIT_LOOP_MINUTES = 5   # how long to wait between rescans of the still-missing set
+
+# A recording is only handed to the fit once the machine writing it has let go of it.
+# _scan_pass applies two independent readiness checks; a recording failing either one
+# goes back into the pending set and is simply retried on a later pass.
+#
+# 1. The claim file. GEDAI claims each recording before writing it
+#    (GEDAI/bidsfun_gedai.m -> qol/claimFile.m): a JSON lock at
+#    <deriv_in>/.locks/<fileID>_desc-<DESC>.lock, refreshed every few minutes by a
+#    heartbeat and deleted only after the .set and its sidecars are written. A live
+#    claim means that recording is being written right now, whatever is already on
+#    disk. LOCK_STALE_MINUTES mirrors claimFile's own 'stalemin' default: past that
+#    the heartbeat has stopped and MATLAB would itself take the claim over, so it is
+#    ignored here too rather than blocking the batch forever.
+# 2. Modification time, for the gap a claim cannot cover -- uselocks=false on the
+#    writing machine, or a JVM-less MATLAB whose lock is best-effort. A recording is
+#    only taken once nothing in its file group has been touched for SETTLE_SECONDS.
+#
+#    Across the whole GROUP, not just the file being read, because the header is not
+#    always written last: pop_saveset writes the .fdt and then the .set
+#    (pop_saveset.m:244 then :261), so a settled .set does imply a finished .fdt --
+#    but pop_writebva opens .vhdr/.vmrk/.dat before writing a byte
+#    (pop_writebva.m:69-71) and fills the header in only at the end, so a .vhdr can
+#    sit there apparently untouched for the minutes its .dat takes to write. The
+#    companion's mtime is what gives that away.
+USE_LOCKS = True          # False if the writing machine ran with bidsfun_gedai's uselocks=false
+LOCK_DIR = ".locks"       # claimFile's lock folder, directly under deriv_in
+LOCK_STALE_MINUTES = 360  # = claimFile's 'stalemin' default; older claims are abandoned
+SETTLE_SECONDS = 90       # a file group must be untouched this long before it is read
+COMPANIONS = {".set": (".fdt",), ".vhdr": (".dat", ".eeg", ".vmrk")}  # data files per header
 
 
 MAX_ITER = 700  # EEGLAB-AMICA's usual budget; pamica's fit default is lower
@@ -220,10 +256,14 @@ def load_bids(mat_path):
     return _unwrap(mat[next(k for k in mat if not k.startswith("__"))])
 
 def deriv_entries(bids, desc, deriv_in):
-    """Build (base, candidates) pairs for every raw .vhdr recording in the BIDS
-    struct that matches the SUBJECTS/SESSIONS/TASKS filters, mapped onto its
+    """Build (base, candidates, lock) triples for every raw .vhdr recording in the
+    BIDS struct that matches the SUBJECTS/SESSIONS/TASKS filters, mapped onto its
     prep-ged derivative file -- WITHOUT checking whether that file actually
     exists yet (see the scan/retry loop in __main__ for that).
+
+    lock is where GEDAI would have claimed this recording while writing it. It is a
+    flat path: claimFile puts every lock straight in <deriv_in>/.locks, named by
+    fileID alone, with no sub-/ses- folders (bidsfun_gedai.m:197).
 
     Mirrors the MATLAB filtering (bids.query(..., 'extension', '.vhdr')) then
     bids.internal.parse_filename entity join, using the ext/entities fields
@@ -248,25 +288,106 @@ def deriv_entries(bids, desc, deriv_in):
             folders = [f"sub-{ent['sub']}"] + ([f"ses-{ent['ses']}"] if "ses" in ent else [])
             base = deriv_in.joinpath(*folders, f"{file_id}_desc-{desc}_eeg")
             candidates = [base.with_suffix(ext) for ext in DATA_EXTENSIONS]
-            entries.append((base, candidates))
+            lock = deriv_in / LOCK_DIR / f"{file_id}_desc-{desc}.lock"
+            entries.append((base, candidates, lock))
     return entries
 
 
+def lock_holder(lock_path):
+    """Who holds the claim on this recording, or None if nobody does.
+
+    Returns claimFile's holder fields plus the minutes since its last sign of life,
+    or None when there is no lock file or the claim is stale. Mirrors that function's
+    own claimAge(): the heartbeat stamp inside the JSON if it can be read (UTC, so
+    unaffected by the two machines disagreeing about local time), the lock file's
+    mtime if it cannot -- which is the case for a lock created microseconds ago whose
+    payload is not written yet, and reads such a lock as fresh rather than abandoned.
+    """
+    try:
+        st = lock_path.stat()
+    except OSError:
+        return None  # no claim (or unreadable, which amounts to the same thing here)
+
+    holder, age_min = {}, None
+    try:
+        holder = json.loads(lock_path.read_text())
+        stamp = datetime.strptime(holder["heartbeat"], "%Y-%m-%dT%H:%M:%SZ")
+        age_min = (datetime.now(timezone.utc).replace(tzinfo=None) - stamp).total_seconds() / 60
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    if age_min is None:
+        age_min = (time.time() - st.st_mtime) / 60
+
+    if age_min > LOCK_STALE_MINUTES:
+        # The heartbeat stopped: the writing machine crashed or was killed. claimFile
+        # would take this claim over rather than honour it, so neither do we.
+        print(f"  [lock] claim {lock_path.name} is {age_min:.0f} min stale, ignoring it")
+        return None
+    return {"host": holder.get("host", "?"), "pid": holder.get("pid", "?"),
+            "age_min": max(age_min, 0.0)}
+
+
+def settled_seconds(data_file):
+    """Seconds since anything in this recording's file group was last modified.
+
+    The group is the header file plus the companions its format keeps the samples in
+    (see COMPANIONS). None if none of them can be stat'ed any more -- the file was
+    deleted between being found and being checked, which is what a refresh on the
+    other machine looks like (smartcache.m:90 deletes before rewriting).
+    """
+    group = [data_file] + [data_file.with_suffix(e)
+                           for e in COMPANIONS.get(data_file.suffix, ())]
+    mtimes = []
+    for path in group:
+        try:
+            mtimes.append(path.stat().st_mtime)
+        except OSError:
+            continue
+    if not mtimes:
+        return None
+    return time.time() - max(mtimes)
+
+
 def _scan_pass(entries):
-    """One pass over `entries` (list of (base, candidates)): returns (found,
-    still_missing) -- found is the list of resolved Paths (existing now),
-    still_missing is the (base, candidates) entries that don't exist yet, to
-    retry on a later pass. A missing entry never blocks checking the next one.
+    """One pass over `entries` (list of (base, candidates, lock)): returns (found,
+    still_missing) -- found is the list of resolved Paths that exist AND are ready to
+    read, still_missing is the entries to retry on a later pass. A missing or
+    not-yet-ready entry never blocks checking the next one.
+
+    Ready means the machine writing it has let go: no live claim on the recording,
+    and nothing in its file group touched for SETTLE_SECONDS (see USE_LOCKS and
+    SETTLE_SECONDS for why both checks are needed). A file caught half-written would
+    otherwise be read here and recorded in FAILURE_LOG permanently, since a recording
+    that fails is not retried -- the one outcome this scan loop exists to avoid.
     """
     found = []
     still_missing = []
-    for base, candidates in entries:
+    for entry in entries:
+        base, candidates, lock = entry
+        if USE_LOCKS:
+            holder = lock_holder(lock)
+            if holder is not None:
+                print(f"  not ready: {base.name} is claimed by {holder['host']} "
+                      f"(pid {holder['pid']}, last beat {holder['age_min']:.0f} min ago)")
+                still_missing.append(entry)
+                continue
         hits = [c for c in candidates if c.is_file()]
         if not hits:
-            still_missing.append((base, candidates))
+            still_missing.append(entry)
             continue
         if len(hits) > 1:
             print(f"both {' and '.join(c.suffix for c in hits)} present for {base.name}, using {hits[0].suffix}")
+        settled = settled_seconds(hits[0])
+        if settled is None:
+            print(f"  not ready: {hits[0].name} vanished while being checked (being rewritten?)")
+            still_missing.append(entry)
+            continue
+        if settled < SETTLE_SECONDS:
+            print(f"  not ready: {hits[0].name} (or a companion) was modified "
+                  f"{settled:.0f} s ago, still being written "
+                  f"(needs {SETTLE_SECONDS} s untouched)")
+            still_missing.append(entry)
+            continue
         found.append(hits[0])
     return found, still_missing
 
@@ -931,15 +1052,15 @@ if __name__ == "__main__":
     # pass checks every still-missing recording once (a miss never blocks checking
     # the next), processes whatever's newly found immediately, then waits
     # WAIT_LOOP_MINUTES before rescanning the remainder. Gives up (raises) once
-    # WAIT_MAX_MINUTES pass with no scan turning up anything new.
+    # WAIT_MAX_MINUTES of *waiting* turn up nothing new (see WAIT_MAX_MINUTES).
     pending = deriv_entries(bids, DESC, deriv_in)
     last_progress = time.monotonic()
     failures = []
     try:
         while pending:
+            t_pass = time.monotonic()
             found, pending = _scan_pass(pending)
             if found:
-                last_progress = time.monotonic()
                 for data_file in found:
                     # One recording per try, so a night that cannot be fitted costs that
                     # night and nothing else. The fit can still fail outright once
@@ -967,17 +1088,28 @@ if __name__ == "__main__":
                             # the whole batch over a labelling problem would be worse than
                             # carrying on and relabelling later.
                             record_failure(failures, mat_path.name, "iclabel", exc, deriv_out)
+                # Reset AFTER the recordings are processed, not before: a pass that
+                # fits nights spends hours here, and that is not time spent waiting
+                # for the other machine. Also means the rescan below happens
+                # immediately rather than after another WAIT_LOOP_MINUTES -- hours
+                # have passed, so the missing files may well be there now.
+                last_progress = time.monotonic()
             if not pending:
                 break
             stalled_for = time.monotonic() - last_progress
             if stalled_for >= WAIT_MAX_MINUTES * 60:
-                names = ", ".join(base.name for base, _ in pending)
+                names = ", ".join(base.name for base, *_ in pending)
                 raise FileNotFoundError(
                     f"giving up after {WAIT_MAX_MINUTES} min with no new input files -- "
                     f"still missing: {names}"
                 )
-            print(f"  {len(pending)} file(s) still missing, rechecking in {WAIT_LOOP_MINUTES} min "
-                  f"(giving up after {WAIT_MAX_MINUTES} min total without progress)")
+            if found:
+                print(f"  {len(pending)} file(s) still missing or not ready, rescanning now "
+                      f"({(time.monotonic() - t_pass) / 60:.1f} min of processing just went by)")
+                continue
+            print(f"  {len(pending)} file(s) still missing or not ready, rechecking in {WAIT_LOOP_MINUTES} min "
+                  f"(giving up after {WAIT_MAX_MINUTES} min of waiting without a new file; "
+                  f"{stalled_for / 60:.0f} min so far)")
             time.sleep(WAIT_LOOP_MINUTES * 60)
     finally:
         # Runs on the give-up raise above and on Ctrl-C too, so an interrupted run
